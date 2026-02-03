@@ -8,7 +8,8 @@ using Random = Unity.Mathematics.Random;
 public partial struct UISystem : ISystem
 {
     private bool m_SettingInitialized;
-
+    private bool m_AutoSimulateInitialized;
+    
     [BurstCompile]
     public void OnCreate(ref SystemState state)
     {
@@ -25,10 +26,13 @@ public partial struct UISystem : ISystem
         {
             UIEvents.InitializeUISettings?.Invoke();
             m_SettingInitialized = true;
-            if (config.AutoInitializeGame)
-            {
-                UIEvents.SimulateGame?.Invoke();
-            }
+        }
+        
+        // Handle auto simulate
+        if (!m_AutoSimulateInitialized && config.AutoInitializeGame && SystemAPI.HasSingleton<GameIsSimulating>())
+        {
+            UIEvents.SimulateGame?.Invoke();
+            m_AutoSimulateInitialized = true;
         }
     }
 }

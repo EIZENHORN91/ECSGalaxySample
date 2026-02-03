@@ -25,9 +25,20 @@ namespace Galaxy
             m_SimulationStarted = false;
         }
 
+        public override void Disable()
+        {
+            base.Disable();
+            UnsubscribeFromEvents();
+        }
+
         private void SubscribeToEvents()
         {
             UIEvents.SimulateGame += SimulateGame;
+        }
+
+        private void UnsubscribeFromEvents()
+        {
+            UIEvents.SimulateGame -= SimulateGame;
         }
 
         private void SetVisualElements()

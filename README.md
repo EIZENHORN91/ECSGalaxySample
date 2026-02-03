@@ -2,7 +2,9 @@
 
 <img src="./_Documentation/Images/GalaxySample.gif" alt="game" height="350"/>
 
-> See [ProjectVersion](./ProjectSettings/ProjectVersion.txt) for minimum supported Unity version.
+> See [ProjectVersion.txt](./ProjectSettings/ProjectVersion.txt) for the minimum supported Unity version.
+This project currently targets [Unity](https://unity.com/releases/editor/whats-new/6000.3.6#installs).
+
 
 This sample demonstrates a large-scale simulation of teams of spaceships fighting for the control of planets. 
 

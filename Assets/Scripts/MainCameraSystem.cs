@@ -9,6 +9,7 @@ namespace Galaxy
     {
         public void OnCreate(ref SystemState state)
         {
+            state.RequireForUpdate<GameIsSimulating>();
             state.RequireForUpdate<MainCamera>();
         }
 

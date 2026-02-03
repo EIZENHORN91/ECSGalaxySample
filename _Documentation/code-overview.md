@@ -45,7 +45,7 @@ An alternative way of handling this would have been to make sure that `FighterAu
 
 #### Blob data authoring
 
-Ships and buildings all have some data that is common across all instances and never changes per-instance. In these cases, it can be beneficial to store that data in blob assets, because it reduces the memory footprint of our actors, and reduces the size of our actor archetypes in chunks (leading to improved performance in certain cases). For this, we use the `IBlobAuthoring` interface in the project. This is a simple interface that objects can implement, and it allows them to act as authorings/bakers for blob assets. 
+Ships and buildings all have some data that is common across all instances and never changes per-instance. In these cases, it can be beneficial to store that data in blob assets, because it reduces the memory footprint of our actors, and reduces the size of our actor archetypes in chunks (leading to improved performance in certain cases). For this, we use the `IBlobAuthoring` interface in the project. This is a simple interface that objects can implement, and it allows them to act as authorings/bakers for blob assets.
 
 Let's see how this works using the `FighterDataObject` as an example:
 * `FighterDataObject` is a serializable class that implements `IBlobAuthoring<FighterData>`, where `FighterData` is an unmanaged representation of the data that is common to all fighters and doesn't change per instance.
@@ -107,7 +107,7 @@ Most AI calculations happen in `TeamAISystem`. A `TeamAIJob` will make each team
 * `DynamicBuffer<TraderAction>`: contains all the actions that traders can choose from. There is one action per captured planet, and each action stores information about how many resources this planet has compared to the other captured planets for this team.
 * `DynamicBuffer<FactoryAction>`: contains all the actions that factories can choose from. These is one action per ship type (because these actions represent "which ship should factories build"), and each ship type is given an importance score that depends on what type of ship this team lacks the most at the moment (among other factors).
 
-Once `TeamAIJob` has finished computing all these possible actions and their importances for the team, individual actors such as ships and factories will choose from these actions, with some personal bias involved. For example, when a fighter ship chooses an action in `FighterAIJob`, it applies a "proximity bias" to the importance score of each action. This means that the fighter ship will tend to favor planets that are nearby even if they're not the best-scoring planets. Once the fighter has a final score with personal bias for each action, it will select one action with a weighted random. 
+Once `TeamAIJob` has finished computing all these possible actions and their importances for the team, individual actors such as ships and factories will choose from these actions, with some personal bias involved. For example, when a fighter ship chooses an action in `FighterAIJob`, it applies a "proximity bias" to the importance score of each action. This means that the fighter ship will tend to favor planets that are nearby even if they're not the best-scoring planets. Once the fighter has a final score with personal bias for each action, it will select one action with a weighted random.
 
 See Debug Views for visualizations:
 * [Fighter Actions](./debug-views.md#fighter-actions)
@@ -140,7 +140,7 @@ This game uses 3 main acceleration structures:
 
 The spatial database allows fast querying of entities in a bounding box.
 
-The world is divided in a uniform grid of cells around the origin, and cells store information about which entities are within their bounds. Every frame, a `ClearSpatialDatabaseSystem` clears all stored data in the spatial database. Then, `BuildSpatialDatabasesSystem` iterates over all ships and buildings, and adds them to the spatial database (calculate which cell they belong to, and add themselves to this cell). 
+The world is divided in a uniform grid of cells around the origin, and cells store information about which entities are within their bounds. Every frame, a `ClearSpatialDatabaseSystem` clears all stored data in the spatial database. Then, `BuildSpatialDatabasesSystem` iterates over all ships and buildings, and adds them to the spatial database (calculate which cell they belong to, and add themselves to this cell).
 
 Once built, the spatial database can be queried using the following functions:
 * `SpatialDatabase.QueryAABB`: gets the spatial database cells that would intersect the AABB, and iterates the cells in order of bottom-to-top coordinates.
@@ -174,7 +174,7 @@ See [Debug Views](./debug-views.md#planets-network) for a visualization.
 
 ## VFX
 
-All VFX in this game is handled by `VFXSystem` and VFXGraphs. At the scale required by this game, spawning one VFXGraph GameObject per vfx instance would very quickly become a performance bottleneck. Instead of this, we use a mostly gameObjects-less approach where every instance of a given type of vfx is handled by one single pre-instantiated VFXGraph in the scene. Each vfx instance is a "spawn a VFX here" message sent to a single VFXGraph object through graphics buffers. This approach allows spawning a very large amount of VFX very often, at very little cost. 
+All VFX in this game is handled by `VFXSystem` and VFXGraphs. At the scale required by this game, spawning one VFXGraph GameObject per vfx instance would very quickly become a performance bottleneck. Instead of this, we use a mostly gameObjects-less approach where every instance of a given type of vfx is handled by one single pre-instantiated VFXGraph in the scene. Each vfx instance is a "spawn a VFX here" message sent to a single VFXGraph object through graphics buffers. This approach allows spawning a very large amount of VFX very often, at very little cost.
 
 `VFXSystem` holds one `VFXManager` for each type of VFX in the game: laser sparks, explosions, thrusters. `VFXManager`s hold native collections of vfx requests. During the game, various job will write to these vfx request collections in order to ask for a VFX to be spawned. For example:
 * `FighterExecuteAttackJob` creates requests for laser sparks effects.
@@ -193,8 +193,14 @@ At the end of the frame, `VFXSystem` updates all `VFXManager`s, who in turn are 
 
 ## LODs
 
-Each ship and building prefab has LODs set up via the `LODGroup` component. The `MeshRenderer`s used for the `LODGroup` are on child GameObjects, since we can only have one `MeshRenderer` per GameObject. At runtime, when instantiating these prefabs, these child GameObjects hosting LOD meshes become child entities.
+In this project, the LOD needs are very simple due to the fact that most ships are a single entity with a single mesh. Because of this, we can benefit from implementing our own very simple LOD system rather than using the built-in one (which supports more complex cases, but at a significant extra performance cost).
 
-Transform hierarchy updates are relatively expensive, and for this project we'd like to avoid having every ship be a transform hierarchy to update. In order to solve this, we created a simple system that unparents these LOD mesh entities during baking, and makes them copy the transform of their root entity every frame at runtime. We add a `CopyRootLocalTransformAsLtWAuthoring` component to all ship child GameObjects that host mesh LODs and don't have any child GameObjects themselves. This marks these with the `TransformUsageFlags.ManualOverride` flag during baking, which means we are now in control of transform components for these entities. Instead of making these entities children of the root ship entitiy, we make them just be root entities, and we add a `CopyEntityLocalTransformAsLtW` to them. The `CopyEntityLocalTransformAsLtW` component stores the root entity whose `LocalTransform` component should be copied into the `LocalToWorld` of this entitiy by the `CopyEntityLocalTransformAsLtWSystem` every frame.
+This is implemented via the `CustomLOD` buffer, `CustomLODSystem`, and `CustomLODAuthoring`. Every LOD mesh of every ship/building is its own prefab, under `Assets/Prefabs/Ships/LODs` and `Assets/Prefabs/Buildings/LODs`. These LOD prefabs are then assigned in the `CustomLODAuthoring` in the actual ship/building prefabs.
 
-With this setup, we avoid expensive transform hierarchy calculations and archetype size inflation for most ships. Instead, we have a much faster `CopyEntityLocalTransformAsLtWJob` that simply copies ship entity `LocalTransform` matrices to ship LOD entity `LocalToWorld`s via lookups. Our tests have shown that this approach to handling simple LOD entity transforms takes roughly 1/5th of the time taken by the default transform hierarchy approach.
+For each entity with a `CustomLOD` buffer (holding references to LOD entities), the `CustomLODSystem` calculates a LOD level based on ship distance to camera, and then simply switches the `materialMeshInfo.Mesh` to the mesh index of the corresponding LOD mesh in the `CustomLOD` buffer.
+
+With this custom LOD solution, we therefore improve performance in many ways compared to if we were using the built-in LOD system:
+- we avoid the significant performance cost of requiring every ship to be a transform hierarchy that must be updated.
+- we reduce the cost of ship instantiation (because ships are now just one entity rather than many).
+- we reduce the cost of the LODs update (because our custom LOD solution is simpler and doesn't have to deal with complex cases).
+- we reduce the cost of all other jobs that iterate ships (like spatial database building, ship AI, ship movement, etc...), because by avoiding transform hierarchy components and built-in LOD components on our ship entities, we reduce the size of our ship entity archetypes. This means other jobs iterating ships have less data to iterate over, which makes them faster.

@@ -9,6 +9,8 @@ namespace Galaxy
     /// <summary>
     /// System to handle planet selection
     /// </summary>
+    [UpdateAfter(typeof(CompanionGameObjectUpdateTransformSystem))]
+    [UpdateBefore(typeof(BuildingSystem))]
     public partial struct PlanetSelectionSystem : ISystem
     {
         private Entity m_SelectedPlanet;
@@ -16,6 +18,7 @@ namespace Galaxy
         [BurstCompile]
         public void OnCreate(ref SystemState state)
         {
+            state.RequireForUpdate<GameIsSimulating>();
             state.RequireForUpdate<MainCamera>();
             state.RequireForUpdate<Planet>();
         }

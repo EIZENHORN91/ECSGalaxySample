@@ -26,11 +26,10 @@ namespace Galaxy
         private void IgnoreCameraInput(bool value)
         {
             EntityManager entityManager = World.DefaultGameObjectInjectionWorld.EntityManager;
-            Entity ignoreCameraInputRequest = entityManager.CreateEntity(typeof(IgnoreCameraInputRequest));
-            entityManager.SetComponentData(ignoreCameraInputRequest, new IgnoreCameraInputRequest
+            if (GameUtilities.TryGetSingletonRW(entityManager, out RefRW<GameCamera> config))
             {
-                Value = value
-            });
+                config.ValueRW.IgnoreInput = value;
+            }
         }
     }
 }

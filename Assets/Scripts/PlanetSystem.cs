@@ -5,196 +5,209 @@ using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 
-[BurstCompile]
-[UpdateAfter(typeof(BuildSpatialDatabaseGroup))]
-[UpdateBefore(typeof(BuildingSystem))]
-public partial struct PlanetSystem : ISystem
+namespace Galaxy
 {
-    private EntityQuery _spatialDatabasesQuery;
-    
     [BurstCompile]
-    public void OnCreate(ref SystemState state)
+    [UpdateAfter(typeof(BuildSpatialDatabaseGroup))]
+    [UpdateAfter(typeof(PlanetSelectionSystem))]
+    [UpdateBefore(typeof(BuildingSystem))]
+    public partial struct PlanetSystem : ISystem
     {
-        _spatialDatabasesQuery = SystemAPI.QueryBuilder().WithAll<SpatialDatabase, SpatialDatabaseCell, SpatialDatabaseElement>().Build();
+        private EntityQuery _spatialDatabasesQuery;
         
-        state.RequireForUpdate<Config>();
-        state.RequireForUpdate<SpatialDatabaseSingleton>();
-        state.RequireForUpdate(_spatialDatabasesQuery);
-        state.RequireForUpdate<BeginSimulationEntityCommandBufferSystem.Singleton>();
-        state.RequireForUpdate<TeamManagerReference>();
-    }
-    
-    [BurstCompile]
-    public void OnUpdate(ref SystemState state)
-    {
-        Config config = SystemAPI.GetSingleton<Config>();
-        SpatialDatabaseSingleton spatialDatabaseSingleton = SystemAPI.GetSingleton<SpatialDatabaseSingleton>();
-        EntityQuery planetsQuery = SystemAPI.QueryBuilder().WithAll<Planet>().Build();
-        
-        PlanetShipsAssessmentJob shipsAssessmentJob = new PlanetShipsAssessmentJob
+        [BurstCompile]
+        public void OnCreate(ref SystemState state)
         {
-            TotalPlanetsCount = planetsQuery.CalculateEntityCount(),
-            PlanetShipsAssessmentsPerUpdate = config.PlanetShipAssessmentsPerUpdate,
-            CachedSpatialDatabase = new CachedSpatialDatabaseRO
+            _spatialDatabasesQuery = SystemAPI.QueryBuilder().WithAll<SpatialDatabase, SpatialDatabaseCell, SpatialDatabaseElement>().Build();
+            
+            state.RequireForUpdate<Config>();
+            state.RequireForUpdate<GameIsSimulating>();
+            state.RequireForUpdate<SpatialDatabaseSingleton>();
+            state.RequireForUpdate(_spatialDatabasesQuery);
+            state.RequireForUpdate<BeginSimulationEntityCommandBufferSystem.Singleton>();
+            state.RequireForUpdate<TeamManagerReference>();
+        }
+        
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
+        public void OnUpdate(ref SystemState state)
+        {
+            Config config = SystemAPI.GetSingleton<Config>();
+            SpatialDatabaseSingleton spatialDatabaseSingleton = SystemAPI.GetSingleton<SpatialDatabaseSingleton>();
+            EntityQuery planetsQuery = SystemAPI.QueryBuilder().WithAll<Planet>().Build();
+            
+            /// Early out if SimulationRate is being update
+            /// This prevents conflicts with time manipulation systems that may affect planet resource generation
+            /// when deterministic simulation is required
+            SimulationRate simRate = SystemAPI.GetSingleton<SimulationRate>();
+            if (simRate.Update)
+                return;
+            
+            PlanetShipsAssessmentJob shipsAssessmentJob = new PlanetShipsAssessmentJob
             {
-                SpatialDatabaseEntity = spatialDatabaseSingleton.TargetablesSpatialDatabase, 
-                SpatialDatabaseLookup = SystemAPI.GetComponentLookup<SpatialDatabase>(true),
-                CellsBufferLookup = SystemAPI.GetBufferLookup<SpatialDatabaseCell>(true),
-                ElementsBufferLookup = SystemAPI.GetBufferLookup<SpatialDatabaseElement>(true),
-            },
-        };
-        state.Dependency = shipsAssessmentJob.Schedule(state.Dependency);
-        
-        PlanetConversionJob conversionJob = new PlanetConversionJob
-        {
-            DeltaTime = SystemAPI.Time.DeltaTime,
-            ECB = SystemAPI.GetSingletonRW<BeginSimulationEntityCommandBufferSystem.Singleton>().ValueRW.CreateCommandBuffer(state.WorldUnmanaged),
-            BuildingReferenceLookup = SystemAPI.GetComponentLookup<BuildingReference>(true),
-            BuildingLookup = SystemAPI.GetComponentLookup<Building>(true),
-        };
-        state.Dependency = conversionJob.Schedule(state.Dependency);
-
-        PlanetResourcesJob resourcesJob = new PlanetResourcesJob
-        {
-            DeltaTime = SystemAPI.Time.DeltaTime,
-        };
-        state.Dependency = resourcesJob.Schedule(state.Dependency);
-        
-        PlanetClearBuildingsDataJob planetClearBuildingsDataJob = new PlanetClearBuildingsDataJob
-        { };
-        state.Dependency = planetClearBuildingsDataJob.ScheduleParallel(state.Dependency);
-    }
-
-    [BurstCompile]
-    public partial struct PlanetShipsAssessmentJob : IJobEntity, IJobEntityChunkBeginEnd
-    {
-        public int TotalPlanetsCount;
-        public int PlanetShipsAssessmentsPerUpdate;
-        public CachedSpatialDatabaseRO CachedSpatialDatabase;
-
-        void Execute(Entity entity, in LocalTransform transform, ref Planet planet, in Team team,
-            ref DynamicBuffer<PlanetShipsAssessment> shipsAssessmentBuffer,
-            in DynamicBuffer<PlanetNetwork> planetNetworkBuffer)
-        {
-            // Ships assessment
-            planet.ShipsAssessmentCounter -= math.min(TotalPlanetsCount, PlanetShipsAssessmentsPerUpdate);
-            if (planet.ShipsAssessmentCounter < 0)
-            {
-                planet.ShipsAssessmentCounter += TotalPlanetsCount;
-
-                // Clear assessment buffer
-                for (int i = 0; i < shipsAssessmentBuffer.Length; i++)
+                TotalPlanetsCount = planetsQuery.CalculateEntityCount(),
+                PlanetShipsAssessmentsPerUpdate = config.PlanetShipAssessmentsPerUpdate,
+                CachedSpatialDatabase = new CachedSpatialDatabaseRO
                 {
-                    shipsAssessmentBuffer[i] = default;
-                }
+                    SpatialDatabaseEntity = spatialDatabaseSingleton.TargetablesSpatialDatabase, 
+                    SpatialDatabaseLookup = SystemAPI.GetComponentLookup<SpatialDatabase>(true),
+                    CellsBufferLookup = SystemAPI.GetBufferLookup<SpatialDatabaseCell>(true),
+                    ElementsBufferLookup = SystemAPI.GetBufferLookup<SpatialDatabaseElement>(true),
+                },
+            };
+            state.Dependency = shipsAssessmentJob.Schedule(state.Dependency);
+            
+            PlanetConversionJob conversionJob = new PlanetConversionJob
+            {
+                DeltaTime = SystemAPI.Time.DeltaTime,
+                ECB = SystemAPI.GetSingletonRW<BeginSimulationEntityCommandBufferSystem.Singleton>().ValueRW.CreateCommandBuffer(state.WorldUnmanaged),
+                BuildingReferenceLookup = SystemAPI.GetComponentLookup<BuildingReference>(true),
+                BuildingLookup = SystemAPI.GetComponentLookup<Building>(true),
+            };
+            state.Dependency = conversionJob.Schedule(state.Dependency);
 
-                // Query allied and enemy ships count
-                PlanetAssessmentCollector collector = new PlanetAssessmentCollector(team.Index, shipsAssessmentBuffer);
-                SpatialDatabase.QueryAABB(in CachedSpatialDatabase._SpatialDatabase,
-                    in CachedSpatialDatabase._SpatialDatabaseCells, in CachedSpatialDatabase._SpatialDatabaseElements,
-                    transform.Position,
-                    planet.ShipsAssessmentExtents, ref collector);
-            }
+            PlanetResourcesJob resourcesJob = new PlanetResourcesJob
+            {
+                DeltaTime = SystemAPI.Time.DeltaTime,
+            };
+            state.Dependency = resourcesJob.Schedule(state.Dependency);
+            
+            PlanetClearBuildingsDataJob planetClearBuildingsDataJob = new PlanetClearBuildingsDataJob
+            { };
+            state.Dependency = planetClearBuildingsDataJob.ScheduleParallel(state.Dependency);
         }
 
-        public bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
+        [BurstCompile]
+        public partial struct PlanetShipsAssessmentJob : IJobEntity, IJobEntityChunkBeginEnd
         {
-            CachedSpatialDatabase.CacheData();
-            return true;
-        }
+            public int TotalPlanetsCount;
+            public int PlanetShipsAssessmentsPerUpdate;
+            public CachedSpatialDatabaseRO CachedSpatialDatabase;
 
-        public void OnChunkEnd(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask,
-            bool chunkWasExecuted)
-        { }
-    }
-
-    [BurstCompile]
-    public partial struct PlanetConversionJob : IJobEntity
-    {
-        public float DeltaTime;
-        public EntityCommandBuffer ECB;
-        [ReadOnly]
-        public ComponentLookup<BuildingReference> BuildingReferenceLookup;
-        [ReadOnly]
-        public ComponentLookup<Building> BuildingLookup;
-        
-        void Execute(Entity entity, ref Planet planet, in Team team, ref DynamicBuffer<CapturingWorker> capturingWorkers, in DynamicBuffer<MoonReference> moonReferences)
-        {
-            // Determine the majority team using CapturingWorker array
-            int majorityTeamIndex = -1;
-            float majorityTeamSpeed = 0;
-            
-            // Determine the majority team using capturingWorkers array
-            for (int i = 0; i < capturingWorkers.Length; i++)
+            void Execute(Entity entity, in LocalTransform transform, ref Planet planet, in Team team,
+                ref DynamicBuffer<PlanetShipsAssessment> shipsAssessmentBuffer,
+                in DynamicBuffer<PlanetNetwork> planetNetworkBuffer)
             {
-                CapturingWorker capturingWorker = capturingWorkers[i];
-                if (capturingWorker.CaptureSpeed > majorityTeamSpeed)
+                // Ships assessment
+                planet.ShipsAssessmentCounter -= math.min(TotalPlanetsCount, PlanetShipsAssessmentsPerUpdate);
+                if (planet.ShipsAssessmentCounter < 0)
                 {
-                    majorityTeamIndex = i;
-                    majorityTeamSpeed = capturingWorker.CaptureSpeed;
-                }
-            }
+                    planet.ShipsAssessmentCounter += TotalPlanetsCount;
 
-            // Reset conversion when there's a team change, or no unique team
-            if (majorityTeamIndex < 0 || majorityTeamIndex != planet.LastConvertingTeam)
-            {
-                planet.LastConvertingTeam = -1;
-                planet.CaptureProgress = 0;
-            }
-            
-            // Handle conversion if there's a single team holds majority long enough
-            if (majorityTeamIndex >= 0)
-            {
-                planet.LastConvertingTeam = majorityTeamIndex;
-                planet.CaptureProgress += DeltaTime * majorityTeamSpeed;
-                
-                if (planet.CaptureProgress >= planet.CaptureTime)
-                {
-                    planet.CaptureProgress = 0;
-                    GameUtilities.SetTeam(ECB, entity, planet.LastConvertingTeam);
-                    
-                    // Convert buildings
-                    for (int i = 0; i < moonReferences.Length; i++)
+                    // Clear assessment buffer
+                    for (int i = 0; i < shipsAssessmentBuffer.Length; i++)
                     {
-                        Entity moonEntity = moonReferences[i].Entity;
-                        Entity buildingEntity = BuildingReferenceLookup[moonEntity].BuildingEntity;
-                        if (BuildingLookup.HasComponent(buildingEntity))
+                        shipsAssessmentBuffer[i] = default;
+                    }
+
+                    // Query allied and enemy ships count
+                    PlanetAssessmentCollector collector = new PlanetAssessmentCollector(team.Index, shipsAssessmentBuffer);
+                    SpatialDatabase.QueryAABB(in CachedSpatialDatabase._SpatialDatabase,
+                        in CachedSpatialDatabase._SpatialDatabaseCells, in CachedSpatialDatabase._SpatialDatabaseElements,
+                        transform.Position,
+                        planet.ShipsAssessmentExtents, ref collector);
+                }
+            }
+
+            public bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
+            {
+                CachedSpatialDatabase.CacheData();
+                return true;
+            }
+
+            public void OnChunkEnd(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask,
+                bool chunkWasExecuted)
+            { }
+        }
+
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
+        public partial struct PlanetConversionJob : IJobEntity
+        {
+            public float DeltaTime;
+            public EntityCommandBuffer ECB;
+            [ReadOnly]
+            public ComponentLookup<BuildingReference> BuildingReferenceLookup;
+            [ReadOnly]
+            public ComponentLookup<Building> BuildingLookup;
+            
+            void Execute(Entity entity, ref Planet planet, in Team team, ref DynamicBuffer<CapturingWorker> capturingWorkers, in DynamicBuffer<MoonReference> moonReferences)
+            {
+                // Determine the majority team using CapturingWorker array
+                int majorityTeamIndex = -1;
+                float majorityTeamSpeed = 0;
+                
+                // Determine the majority team using capturingWorkers array
+                for (int i = 0; i < capturingWorkers.Length; i++)
+                {
+                    CapturingWorker capturingWorker = capturingWorkers[i];
+                    if (capturingWorker.CaptureSpeed > majorityTeamSpeed)
+                    {
+                        majorityTeamIndex = i;
+                        majorityTeamSpeed = capturingWorker.CaptureSpeed;
+                    }
+                }
+
+                // Reset conversion when there's a team change, or no unique team
+                if (majorityTeamIndex < 0 || majorityTeamIndex != planet.LastConvertingTeam)
+                {
+                    planet.LastConvertingTeam = -1;
+                    planet.CaptureProgress = 0;
+                }
+                
+                // Handle conversion if there's a single team holds majority long enough
+                if (majorityTeamIndex >= 0)
+                {
+                    planet.LastConvertingTeam = majorityTeamIndex;
+                    planet.CaptureProgress += DeltaTime * majorityTeamSpeed;
+                    
+                    if (planet.CaptureProgress >= planet.CaptureTime)
+                    {
+                        planet.CaptureProgress = 0;
+                        GameUtilities.SetTeam(ECB, entity, planet.LastConvertingTeam);
+                        
+                        // Convert buildings
+                        for (int i = 0; i < moonReferences.Length; i++)
                         {
-                            GameUtilities.SetTeam(ECB, buildingEntity, planet.LastConvertingTeam);
+                            Entity moonEntity = moonReferences[i].Entity;
+                            Entity buildingEntity = BuildingReferenceLookup[moonEntity].BuildingEntity;
+                            if (BuildingLookup.HasComponent(buildingEntity))
+                            {
+                                GameUtilities.SetTeam(ECB, buildingEntity, planet.LastConvertingTeam);
+                            }
                         }
                     }
                 }
-            }
 
-            // Clear capturingWorkers buffer
-            for (int i = 0; i < capturingWorkers.Length; i++)
+                // Clear capturingWorkers buffer
+                for (int i = 0; i < capturingWorkers.Length; i++)
+                {
+                    capturingWorkers[i] = default;
+                }
+            }
+        }
+
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
+        public partial struct PlanetResourcesJob : IJobEntity
+        {
+            public float DeltaTime;
+            
+            void Execute(ref Planet planet)
             {
-                capturingWorkers[i] = default;
+                
+                float3 finalGenerationRate =
+                    planet.ResourceGenerationRate + planet.ResearchBonuses.PlanetResourceGenerationRadeAdd;
+                planet.ResourceCurrentStorage =
+                    math.clamp(planet.ResourceCurrentStorage + (finalGenerationRate * DeltaTime), float3.zero,
+                        planet.ResourceMaxStorage);
             }
         }
-    }
-
-    [BurstCompile]
-    public partial struct PlanetResourcesJob : IJobEntity
-    {
-        public float DeltaTime;
         
-        void Execute(ref Planet planet)
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
+        public partial struct PlanetClearBuildingsDataJob : IJobEntity
         {
-            float3 finalGenerationRate =
-                planet.ResourceGenerationRate + planet.ResearchBonuses.PlanetResourceGenerationRadeAdd;
-            planet.ResourceCurrentStorage =
-                math.clamp(planet.ResourceCurrentStorage + (finalGenerationRate * DeltaTime), float3.zero,
-                    planet.ResourceMaxStorage);
-        }
-    }
-    
-    [BurstCompile]
-    public partial struct PlanetClearBuildingsDataJob : IJobEntity
-    {
-        private void Execute(ref Planet planet)
-        {
-            planet.ResearchBonuses.Reset();
+            private void Execute(ref Planet planet)
+            {
+                planet.ResearchBonuses.Reset();
+            }
         }
     }
 }

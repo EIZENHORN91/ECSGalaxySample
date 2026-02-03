@@ -6,7 +6,7 @@ namespace Galaxy
     public class ActorTypeAuthoring : MonoBehaviour
     {
         public bool IsTargetableByAttacks = true;
-        
+
         class Baker : Baker<ActorTypeAuthoring>
         {
             public override void Bake(ActorTypeAuthoring authoring)
@@ -36,7 +36,7 @@ namespace Galaxy
                 {
                     actorType = ActorType.ResearchType;
                 }
-                
+
                 Entity entity = GetEntity(authoring, TransformUsageFlags.None);
                 AddComponent(entity, new ActorType
                 {
@@ -45,7 +45,6 @@ namespace Galaxy
                 if (authoring.IsTargetableByAttacks)
                 {
                     AddComponent(entity, new Targetable());
-                    AddComponent(entity, new SpatialDatabaseCellIndex());
                 }
             }
         }
