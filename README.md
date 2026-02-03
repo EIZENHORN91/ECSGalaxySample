@@ -30,4 +30,4 @@ Controls:
 * [Game Overview](./_Documentation/game-overview.md)
 * [Code Overview](./_Documentation/code-overview.md)
 * [Debug Views](./_Documentation/debug-views.md)
-* [Determinism](./_Documentation/deterministic-positions.md)
+* [Determinism](./_Documentation/determinism.md)
