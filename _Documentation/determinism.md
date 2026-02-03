@@ -18,7 +18,10 @@ If the framerate is not fixed, the frame deltaTimes will vary from one frame to 
 ### Deterministic randoms
 All randoms must be deterministic. For this, we use `Unity.Mathematics.Random` for all of our randoms. This random is already deterministic as long as we guarantee that all the seeds are always the same, and all the `random.NextFloat()` are called in the same order/frequency.
 
-### Deterministic burst compilaiton
+### Deterministic systems update order
+All simulation systems must also update in the same order. In ECS, this happens by default.
+
+### Deterministic burst compilation
 All code that affects simulation and that deals with float values must be compiled with `[BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]`. This ensures floating point determinism even across platforms.
 
 ### Deterministic Entity creation
