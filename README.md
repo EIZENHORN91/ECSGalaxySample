@@ -6,7 +6,7 @@
 This project currently targets [Unity](https://unity.com/releases/editor/whats-new/6000.3.6#installs).
 
 
-This sample demonstrates a large-scale simulation of teams of spaceships fighting for the control of planets. 
+This sample demonstrates a large-scale simulation of teams of spaceships fighting for the control of planets.
 
 Fighter ships defend and attack planets, worker ships capture planets and build buildings on planet moons, and trader ships distribute resources across planets. Buildings use their planet's resources to build ships, provide defensive capabilities, or upgrade produced ships.
 
@@ -30,3 +30,4 @@ Controls:
 * [Game Overview](./_Documentation/game-overview.md)
 * [Code Overview](./_Documentation/code-overview.md)
 * [Debug Views](./_Documentation/debug-views.md)
+* [Determinism](./_Documentation/deterministic-positions.md)
