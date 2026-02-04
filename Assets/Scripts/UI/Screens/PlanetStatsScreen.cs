@@ -94,11 +94,11 @@ namespace Galaxy
             Vector2 newPosition = RuntimePanelUtils.CameraTransformWorldToPanel(m_RootElement.panel, targetPosition + cameraOffset, mainCamera);
             if (math.dot(mainCamera.transform.forward, targetPosition - mainCamera.transform.position) < 0f)
             {
-                m_StatsPanel.transform.position = new Vector2(-1000, -1000); 
+                m_StatsPanel.style.translate = new Vector2(-1000, -1000);
             }
             else
             {
-                m_StatsPanel.transform.position = newPosition; 
+                m_StatsPanel.style.translate = newPosition;
             }
         }
     }
