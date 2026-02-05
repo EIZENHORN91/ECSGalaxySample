@@ -4,6 +4,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Galaxy;
 
 public class AdvancedTeamStats
 {

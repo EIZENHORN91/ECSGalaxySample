@@ -13,14 +13,14 @@ public struct PlanetAssessmentCollector : ISpatialQueryCollector
     public PlanetAssessmentCollector(int querierTeam, DynamicBuffer<PlanetShipsAssessment> shipsAssessmentBuffer)
     {
         ShipsAssessmentBuffer = shipsAssessmentBuffer;
-    } 
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void OnVisitCell(in SpatialDatabaseCell cell, in UnsafeList<SpatialDatabaseElement> elements, out bool shouldEarlyExit)
     {
         shouldEarlyExit = false;
 
-        for (int i = cell.StartIndex; i < cell.StartIndex + cell.ElementsCount; i++)
+        for (int i = cell.StartIndex; i < cell.StartIndex + cell.GetValidElementsCount(); i++)
         {
             SpatialDatabaseElement element = elements[i];
             int elementTeam = (int)element.Team;

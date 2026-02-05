@@ -1,64 +1,70 @@
-using System.Collections;
-using System.Collections.Generic;
 using Unity.Burst;
 using Unity.Burst.Intrinsics;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
 
-[BurstCompile]
-[UpdateAfter(typeof(BeginSimulationMainThreadGroup))]
-[UpdateBefore(typeof(TransformSystemGroup))]
-public partial struct LaserSystem : ISystem
+namespace Galaxy
 {
     [BurstCompile]
-    public void OnUpdate(ref SystemState state)
+    [UpdateAfter(typeof(BeginSimulationMainThreadGroup))]
+    [UpdateBefore(typeof(TransformSystemGroup))]
+    public partial struct LaserSystem : ISystem
     {
-        LaserJob job = new LaserJob
+        public void OnCreate(ref SystemState state)
         {
-            DeltaTime = SystemAPI.Time.DeltaTime,
-            ECB = SystemAPI.GetSingleton<BeginSimulationEntityCommandBufferSystem.Singleton>().CreateCommandBuffer(state.WorldUnmanaged).AsParallelWriter(),
-        };
-        job.ScheduleParallel();
-    }
+            state.RequireForUpdate<GameIsSimulating>();
+        }
 
-    [BurstCompile]
-    public partial struct LaserJob : IJobEntity, IJobEntityChunkBeginEnd
-    {
-        public float DeltaTime;
-        public EntityCommandBuffer.ParallelWriter ECB;
-
-        private int _chunkIndex;
-
-        public void Execute(Entity entity, ref Laser laser, ref PostTransformMatrix postTransformMatrix)
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
+        public void OnUpdate(ref SystemState state)
         {
-            laser.LifetimeCounter -= DeltaTime;
-
-            if (laser.HasExistedOneFrame == 1)
+            LaserJob job = new LaserJob
             {
-                // Scaling
-                float lifetimeRatio = math.saturate(laser.LifetimeCounter / laser.MaxLifetime);
-                float originalScaleZ = postTransformMatrix.Value.Scale().z;
-                postTransformMatrix.Value = float4x4.Scale(lifetimeRatio, lifetimeRatio, originalScaleZ);
+                DeltaTime = SystemAPI.Time.DeltaTime,
+                ECB = SystemAPI.GetSingleton<BeginSimulationEntityCommandBufferSystem.Singleton>().CreateCommandBuffer(state.WorldUnmanaged).AsParallelWriter(),
+            };
+            job.ScheduleParallel();
+        }
 
-                if (laser.LifetimeCounter <= 0f)
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
+        public partial struct LaserJob : IJobEntity, IJobEntityChunkBeginEnd
+        {
+            public float DeltaTime;
+            public EntityCommandBuffer.ParallelWriter ECB;
+
+            private int _chunkIndex;
+
+            private void Execute(Entity entity, ref Laser laser, ref PostTransformMatrix postTransformMatrix)
+            {
+                laser.LifetimeCounter -= DeltaTime;
+
+                if (laser.HasExistedOneFrame == 1)
                 {
-                    ECB.DestroyEntity(_chunkIndex, entity);
+                    // Scaling
+                    float lifetimeRatio = math.saturate(laser.LifetimeCounter / laser.MaxLifetime);
+                    float originalScaleZ = postTransformMatrix.Value.Scale().z;
+                    postTransformMatrix.Value = float4x4.Scale(lifetimeRatio, lifetimeRatio, originalScaleZ);
+
+                    if (laser.LifetimeCounter <= 0f)
+                    {
+                        ECB.DestroyEntity(_chunkIndex, entity);
+                    }
                 }
+
+                laser.HasExistedOneFrame = 1;
             }
 
-            laser.HasExistedOneFrame = 1;
-        }
+            public bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
+            {
+                _chunkIndex = unfilteredChunkIndex;
+                return true;
+            }
 
-        public bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
-        {
-            _chunkIndex = unfilteredChunkIndex;
-            return true;
-        }
-
-        public void OnChunkEnd(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask,
-            bool chunkWasExecuted)
-        {
+            public void OnChunkEnd(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask,
+                bool chunkWasExecuted)
+            {
+            }
         }
     }
 }

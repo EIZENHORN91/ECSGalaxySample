@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.VFX;
+using Galaxy;
 
 public class ManagedResources : MonoBehaviour
 {

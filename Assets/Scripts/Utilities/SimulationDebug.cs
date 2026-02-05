@@ -21,39 +21,39 @@ public class SimulationDebug : MonoBehaviour
     public bool DebugWorkerActions;
     public bool DebugTraderActions;
 
-    [Header("Details - Ruler")] 
+    [Header("Details - Ruler")]
     public float RulerLength = 1f;
 
-    [Header("Details - Spatial Database")] 
+    [Header("Details - Spatial Database")]
     public Color SpatialDatabaseBoundsColor = Color.cyan;
     public Color SpatialDatabaseCellsColor = Color.cyan;
     public Color SpatialDatabaseOccupiedCellsColor = Color.cyan;
     public int DebugSpatialDatabaseIndex;
     public bool DebugSpatialDatabaseCells = true;
-    
-    [Header("Details - Planet Navigation Grid")] 
+
+    [Header("Details - Planet Navigation Grid")]
     public Color PlanetNavGridBoundsColor = Color.cyan;
     public Color PlanetNavGridCellsColor = Color.cyan;
     public Color PlanetNavGridDirectionsColor = Color.yellow;
     public bool DebugPlanetNavGridCells = true;
     public bool DebugPlanetNavGridCellDatas = true;
-    
-    [Header("Details - Planets Network")] 
+
+    [Header("Details - Planets Network")]
     public Color PlanetsNetworkColor = Color.magenta;
-    
-    [Header("Details - Planet Ships Assessment")] 
+
+    [Header("Details - Planet Ships Assessment")]
     public Color PlanetsShipsAssessmentColor = Color.magenta;
-    
-    [Header("Details - Fighter Actions")] 
+
+    [Header("Details - Fighter Actions")]
     public Color FighterAttackColor = Color.red;
     public Color FighterDefendColor = Color.green;
     public Color FighterChaseColor = Color.yellow;
-    
-    [Header("Details - Worker Actions")] 
+
+    [Header("Details - Worker Actions")]
     public Color WorkerCaptureColor = Color.red;
     public Color WorkerBuildColor = Color.green;
-    
-    [Header("Details - Trader Routes")] 
+
+    [Header("Details - Trader Routes")]
     public Color TraderToGiverColor = Color.red;
     public Color TraderToReceiverColor = Color.green;
     public Color TraderCargoResourceXColor = Color.yellow;
@@ -98,7 +98,7 @@ public class SimulationDebug : MonoBehaviour
                     spatialDatabaseQuery.ToEntityArray(Allocator.Temp);
                 NativeArray<SpatialDatabase> spatialDatabases =
                     spatialDatabaseQuery.ToComponentDataArray<SpatialDatabase>(Allocator.Temp);
-                
+
                 if (DebugSpatialDatabaseIndex >= 0 && DebugSpatialDatabaseIndex < spatialDatabases.Length)
                 {
                     Entity spatialDatabaseEntity = spatialDatabaseEntities[DebugSpatialDatabaseIndex];
@@ -138,7 +138,7 @@ public class SimulationDebug : MonoBehaviour
                                     int3 cellCoords = new int3(x, y, z);
                                     int cellIndex =
                                         UniformOriginGrid.GetCellIndexFromCoords(in spatialDatabase.Grid, cellCoords);
-                                    if (cellsBuffer[cellIndex].ElementsCount > 0)
+                                    if (cellsBuffer[cellIndex].GetValidElementsCount() > 0)
                                     {
                                         Gizmos.color = SpatialDatabaseOccupiedCellsColor;
                                         Gizmos.DrawCube(cellCenter, cellSize3);
@@ -163,7 +163,7 @@ public class SimulationDebug : MonoBehaviour
 
     private void HandleDebugPlanetNavigationGrid(EntityManager entityManager)
     {
-        if(DebugPlanetNavigationGrid)
+        if (DebugPlanetNavigationGrid)
         {
             EntityQuery planetNavGridQuery = new EntityQueryBuilder(Allocator.Temp).WithAll<PlanetNavigationGrid, PlanetNavigationCell>().Build(entityManager);
 
@@ -203,7 +203,7 @@ public class SimulationDebug : MonoBehaviour
                         }
                     }
                 }
-                
+
                 // Draw cell datas
                 if (DebugPlanetNavGridCellDatas)
                 {
@@ -233,7 +233,7 @@ public class SimulationDebug : MonoBehaviour
         if (DebugPlanetsNetwork)
         {
             Gizmos.color = PlanetsNetworkColor;
-            
+
             EntityQuery planetsQuery = new EntityQueryBuilder(Allocator.Temp).WithAll<Planet, LocalTransform, PlanetNetwork>().Build(entityManager);
             NativeArray<Entity> planetEntities = planetsQuery.ToEntityArray(Allocator.Temp);
             for (int i = 0; i < planetEntities.Length; i++)
@@ -244,7 +244,7 @@ public class SimulationDebug : MonoBehaviour
 
                 for (int j = 0; j < planetNetworkBuffer.Length; j++)
                 {
-                    Gizmos.DrawLine(planetTransform.Position, planetNetworkBuffer[j].Position);   
+                    Gizmos.DrawLine(planetTransform.Position, planetNetworkBuffer[j].Position);
                 }
             }
             planetEntities.Dispose();
@@ -257,7 +257,7 @@ public class SimulationDebug : MonoBehaviour
         if (DebugPlanetShipsAssessment)
         {
             Gizmos.color = PlanetsShipsAssessmentColor;
-            
+
             EntityQuery planetsQuery = new EntityQueryBuilder(Allocator.Temp).WithAll<Planet, LocalTransform, PlanetNetwork>().Build(entityManager);
             NativeArray<Entity> planetEntities = planetsQuery.ToEntityArray(Allocator.Temp);
             for (int i = 0; i < planetEntities.Length; i++)
@@ -284,7 +284,7 @@ public class SimulationDebug : MonoBehaviour
                 Ship ship = entityManager.GetComponentData<Ship>(fighterEntity);
                 Fighter fighter = entityManager.GetComponentData<Fighter>(fighterEntity);
                 LocalTransform transform = entityManager.GetComponentData<LocalTransform>(fighterEntity);
-                
+
                 // Chase
                 if (fighter.TargetIsEnemyShip == 1)
                 {
@@ -332,7 +332,7 @@ public class SimulationDebug : MonoBehaviour
                 {
                     LocalTransform transform = entityManager.GetComponentData<LocalTransform>(workerEntity);
                     Worker worker = entityManager.GetComponentData<Worker>(workerEntity);
-                    
+
                     float3 targetPosition = ship.NavigationTargetPosition;
 
                     // Build
@@ -375,12 +375,12 @@ public class SimulationDebug : MonoBehaviour
                         Gizmos.color = TraderToGiverColor;
                         Gizmos.DrawLine(transform.Position, giverTransform.Position);
                     }
-                    
+
                     // Receiver
                     LocalTransform receiverTransform = entityManager.GetComponentData<LocalTransform>(trader.ReceivingPlanetEntity);
                     Gizmos.color = TraderToReceiverColor;
                     Gizmos.DrawLine(transform.Position, receiverTransform.Position);
-                    
+
                     // Cargo
                     float cargoRatio = math.csum(trader.CarriedResources) /
                                         trader.TraderData.Value.ResourceCarryCapacity;
@@ -398,10 +398,10 @@ public class SimulationDebug : MonoBehaviour
                     {
                         Gizmos.color = TraderCargoResourceZColor;
                     }
-                    
+
                     Gizmos.DrawWireCube(transform.Position, new float3(TraderCargoScale));
                     Gizmos.DrawCube(transform.Position, new float3(TraderCargoScale, cargoRatio * TraderCargoScale, TraderCargoScale));
-                    
+
                 }
             }
             traderEntities.Dispose();

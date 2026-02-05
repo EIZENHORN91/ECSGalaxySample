@@ -2,12 +2,15 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Threading;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
 using Unity.Jobs;
 using Unity.Mathematics;
+using UnityEngine;
 
 public interface ISpatialQueryCollector
 {
@@ -16,26 +19,43 @@ public interface ISpatialQueryCollector
 }
 
 [InternalBufferCapacity(0)]
+[StructLayout(LayoutKind.Explicit)]
 public struct SpatialDatabaseCell : IBufferElementData
 {
+    // The elements count must be the first element at fieldoffset 0, because we try to obtain a ptr to it in
+    // some other parts of the code
+    [FieldOffset(0)]
+    public int UncappedElementsCount; // May overflow capacity, may be negative if cell elements are invalidated
+    [FieldOffset(4)]
     public int StartIndex;
-    public int ElementsCount;
+    [FieldOffset(8)]
     public int ElementsCapacity;
-    public int ExcessElementsCount;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public int GetValidElementsCount()
+    {
+        return math.min(math.max(0, UncappedElementsCount), ElementsCapacity);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public int GetExcessElementsCount()
+    {
+        return math.max(0, math.abs(UncappedElementsCount) - ElementsCapacity);
+    }
 }
 
 [InternalBufferCapacity(0)]
-public struct SpatialDatabaseElement : IBufferElementData
+public struct SpatialDatabaseElement : IBufferElementData, IComparable<SpatialDatabaseElement>
 {
     public Entity Entity;
     public float3 Position;
     public byte Team;
     public byte Type;
-}
 
-public struct SpatialDatabaseCellIndex : IComponentData
-{
-    public int CellIndex;
+    public int CompareTo(SpatialDatabaseElement other)
+    {
+        return Entity.CompareTo(other.Entity);
+    }
 }
 
 public unsafe struct CachedSpatialDatabase
@@ -64,17 +84,15 @@ public unsafe struct CachedSpatialDatabase
     }
 }
 
-public unsafe struct CachedSpatialDatabaseUnsafe
+
+public unsafe struct CachedSpatialDatabaseUnsafeParallel
 {
     public Entity SpatialDatabaseEntity;
     [NativeDisableParallelForRestriction]
-    [NativeDisableContainerSafetyRestriction]
     public ComponentLookup<SpatialDatabase> SpatialDatabaseLookup;
     [NativeDisableParallelForRestriction]
-    [NativeDisableContainerSafetyRestriction]
     public BufferLookup<SpatialDatabaseCell> CellsBufferLookup;
     [NativeDisableParallelForRestriction]
-    [NativeDisableContainerSafetyRestriction]
     public BufferLookup<SpatialDatabaseElement> ElementsBufferLookup;
 
     public bool _IsInitialized;
@@ -144,7 +162,7 @@ public struct SpatialDatabase : IComponentData
         // Init grid
         spatialDatabase.Grid = new UniformOriginGrid(halfExtents, subdivisions);
 
-        // Reallocate 
+        // Reallocate
         cellsBuffer.Resize(spatialDatabase.Grid.CellCount, NativeArrayOptions.ClearMemory);
         storageBuffer.Resize(spatialDatabase.Grid.CellCount * cellEntriesCapacity, NativeArrayOptions.ClearMemory);
 
@@ -153,9 +171,8 @@ public struct SpatialDatabase : IComponentData
         {
             SpatialDatabaseCell cell = cellsBuffer[i];
             cell.StartIndex = i * cellEntriesCapacity;
-            cell.ElementsCount = 0;
+            cell.UncappedElementsCount = 0;
             cell.ElementsCapacity = cellEntriesCapacity;
-            cell.ExcessElementsCount = 0;
             cellsBuffer[i] = cell;
         }
     }
@@ -171,13 +188,12 @@ public struct SpatialDatabase : IComponentData
 
             // Handle calculating an increased max storage for this cell
             cell.ElementsCapacity = math.select(cell.ElementsCapacity,
-                (int)math.ceil((cell.ElementsCapacity + cell.ExcessElementsCount) * ElementsCapacityGrowFactor),
-                cell.ExcessElementsCount > 0);
+                (int)math.ceil((cell.ElementsCapacity + cell.GetExcessElementsCount()) * ElementsCapacityGrowFactor),
+                cell.GetExcessElementsCount() > 0);
             totalDesiredStorage += cell.ElementsCapacity;
 
             // Reset storage
-            cell.ElementsCount = 0;
-            cell.ExcessElementsCount = 0;
+            cell.UncappedElementsCount = 0;
 
             cellsBuffer[i] = cell;
         }
@@ -186,55 +202,45 @@ public struct SpatialDatabase : IComponentData
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void AddToDataBase(in SpatialDatabase spatialDatabase,
+    public unsafe static void AddToDataBaseSingleThread(in SpatialDatabase spatialDatabase,
         ref UnsafeList<SpatialDatabaseCell> cellsBuffer, ref UnsafeList<SpatialDatabaseElement> storageBuffer,
         in SpatialDatabaseElement element)
     {
         int cellIndex = UniformOriginGrid.GetCellIndex(in spatialDatabase.Grid, element.Position);
         if (cellIndex >= 0)
         {
-            SpatialDatabaseCell cell = cellsBuffer[cellIndex];
+            ref SpatialDatabaseCell cellRef = 
+                ref UnsafeUtility.ArrayElementAsRef<SpatialDatabaseCell>(cellsBuffer.Ptr, cellIndex);
 
-            // Check capacity
-            if (cell.ElementsCount + 1 > cell.ElementsCapacity)
+            int addIndex = cellRef.UncappedElementsCount;
+            cellRef.UncappedElementsCount++;
+            
+            // Add entry at cell index only if within capacity
+            if (addIndex < cellRef.ElementsCapacity)
             {
-                // Remember excess count for resizing next time we clear
-                cell.ExcessElementsCount++;
+                storageBuffer[cellRef.StartIndex + addIndex] = element;
             }
-            else
-            {
-                // Add entry at cell index
-                storageBuffer[cell.StartIndex + cell.ElementsCount] = element;
-                cell.ElementsCount++;
-            }
-
-            cellsBuffer[cellIndex] = cell;
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void AddToDataBase(in SpatialDatabase spatialDatabase,
+    public unsafe static void AddToDataBaseParallel(in SpatialDatabase spatialDatabase,
         ref UnsafeList<SpatialDatabaseCell> cellsBuffer, ref UnsafeList<SpatialDatabaseElement> storageBuffer,
-        in SpatialDatabaseElement element, int cellIndex)
+        in SpatialDatabaseElement element)
     {
+        int cellIndex = UniformOriginGrid.GetCellIndex(in spatialDatabase.Grid, element.Position);
         if (cellIndex >= 0)
         {
-            SpatialDatabaseCell cell = cellsBuffer[cellIndex];
-
-            // Check capacity
-            if (cell.ElementsCount + 1 > cell.ElementsCapacity)
+            SpatialDatabaseCell* cellPtr = cellsBuffer.Ptr + (long)cellIndex;
+            
+            // This line assumes that the "elementsCount" of the cell is at FieldOffset(0) in the cell struct
+            int addIndex = Interlocked.Increment(ref UnsafeUtility.AsRef<int>(cellPtr)) - 1;
+            
+            // Add entry at cell index only if within capacity
+            if (addIndex < cellPtr->ElementsCapacity)
             {
-                // Remember excess count for resizing next time we clear
-                cell.ExcessElementsCount++;
+                storageBuffer[cellPtr->StartIndex + addIndex] = element;
             }
-            else
-            {
-                // Add entry at cell index
-                storageBuffer[cell.StartIndex + cell.ElementsCount] = element;
-                cell.ElementsCount++;
-            }
-
-            cellsBuffer[cellIndex] = cell;
         }
     }
 

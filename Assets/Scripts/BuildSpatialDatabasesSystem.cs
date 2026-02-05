@@ -1,149 +1,92 @@
 using Unity.Burst;
 using Unity.Burst.Intrinsics;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
 using Unity.Jobs;
 using Unity.Jobs.LowLevel.Unsafe;
 using Unity.Mathematics;
 using Unity.Transforms;
 
-[BurstCompile]
-[UpdateInGroup(typeof(BuildSpatialDatabaseGroup))]
-public partial struct BuildSpatialDatabasesSystem : ISystem
+namespace Galaxy
 {
-    private EntityQuery _spatialDatabasesQuery;
-    
     [BurstCompile]
-    public void OnCreate(ref SystemState state)
+    [UpdateInGroup(typeof(BuildSpatialDatabaseGroup))]
+    public partial struct BuildSpatialDatabasesSystem : ISystem
     {
-        _spatialDatabasesQuery = SystemAPI.QueryBuilder().WithAll<SpatialDatabase, SpatialDatabaseCell, SpatialDatabaseElement>().Build();
-        
-        state.RequireForUpdate<Config>();
-        state.RequireForUpdate<SpatialDatabaseSingleton>();
-        state.RequireForUpdate(_spatialDatabasesQuery);
-    }
+        private EntityQuery _spatialDatabasesQuery;
 
-    [BurstCompile]
-    public void OnUpdate(ref SystemState state)
-    {
-        Config config = SystemAPI.GetSingleton<Config>();
-        SpatialDatabaseSingleton spatialDatabaseSingleton = SystemAPI.GetSingleton<SpatialDatabaseSingleton>();
-
-        if (config.BuildSpatialDatabaseParallel)
+        [BurstCompile]
+        public void OnCreate(ref SystemState state)
         {
-            CachedSpatialDatabaseUnsafe cachedSpatialDatabase = new CachedSpatialDatabaseUnsafe
-            {
-                SpatialDatabaseEntity = spatialDatabaseSingleton.TargetablesSpatialDatabase,
-                SpatialDatabaseLookup = SystemAPI.GetComponentLookup<SpatialDatabase>(false),
-                CellsBufferLookup = SystemAPI.GetBufferLookup<SpatialDatabaseCell>(false),
-                ElementsBufferLookup = SystemAPI.GetBufferLookup<SpatialDatabaseElement>(false),
-            };
+            _spatialDatabasesQuery = SystemAPI.QueryBuilder().WithAll<SpatialDatabase, SpatialDatabaseCell, SpatialDatabaseElement>().Build();
+            state.RequireForUpdate<Config>();
+            state.RequireForUpdate<GameIsSimulating>();
+            state.RequireForUpdate<SpatialDatabaseSingleton>();
+            state.RequireForUpdate(_spatialDatabasesQuery);
+        }
 
-            // Make each ship calculate the octant it belongs to
-            SpatialDatabaseParallelComputeCellIndexJob cellIndexJob = new SpatialDatabaseParallelComputeCellIndexJob
-            {
-                CachedSpatialDatabase = cachedSpatialDatabase,
-            };
-            state.Dependency = cellIndexJob.ScheduleParallel(state.Dependency);
-            
-            // Launch X jobs, each responsible for 1/Xth of spatial database cells
-            JobHandle initialDep = state.Dependency;
-            int parallelCount = math.max(1, JobsUtility.JobWorkerCount - 1);
-            for (int s = 0; s < parallelCount; s++)
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
+        public void OnUpdate(ref SystemState state)
+        {
+            Config config = SystemAPI.GetSingleton<Config>();
+            SpatialDatabaseSingleton spatialDatabaseSingleton = SystemAPI.GetSingleton<SpatialDatabaseSingleton>();
+
+            if (config.BuildSpatialDatabaseParallel)
             {
                 BuildSpatialDatabaseParallelJob buildJob = new BuildSpatialDatabaseParallelJob
                 {
-                    JobSequenceNb = s,
-                    JobsTotalCount = parallelCount,
-                    CachedSpatialDatabase = cachedSpatialDatabase,
+                    CachedSpatialDatabase = new CachedSpatialDatabaseUnsafeParallel
+                    {
+                        SpatialDatabaseEntity = spatialDatabaseSingleton.TargetablesSpatialDatabase,
+                        SpatialDatabaseLookup = SystemAPI.GetComponentLookup<SpatialDatabase>(false),
+                        CellsBufferLookup = SystemAPI.GetBufferLookup<SpatialDatabaseCell>(false),
+                        ElementsBufferLookup = SystemAPI.GetBufferLookup<SpatialDatabaseElement>(false),
+                    },
                 };
-                state.Dependency = JobHandle.CombineDependencies(state.Dependency, buildJob.Schedule(initialDep));
+                state.Dependency = buildJob.ScheduleParallel(state.Dependency);
+
+                // The following job is only necessary for determinism.
+                // It sorts spatial database entries in every cell by Entity index, so that no matter in
+                // what order they were added, the results will always be the same.
+                int workersCountForSort = math.max(1, JobsUtility.JobWorkerCount - 1);
+                SortSpatialDatabaseCellElementsParallelJob sortElementsJob =
+                    new SortSpatialDatabaseCellElementsParallelJob
+                    {
+                        CellsIterationStride = workersCountForSort,
+                        CachedSpatialDatabase = new CachedSpatialDatabaseUnsafeParallel
+                        {
+                            SpatialDatabaseEntity = spatialDatabaseSingleton.TargetablesSpatialDatabase,
+                            SpatialDatabaseLookup = SystemAPI.GetComponentLookup<SpatialDatabase>(false),
+                            CellsBufferLookup = SystemAPI.GetBufferLookup<SpatialDatabaseCell>(false),
+                            ElementsBufferLookup = SystemAPI.GetBufferLookup<SpatialDatabaseElement>(false),
+                        },
+                    };
+                state.Dependency = sortElementsJob.Schedule(workersCountForSort, 1, state.Dependency);
+            }
+            else
+            {
+                BuildSpatialDatabaseSingleJob buildJob = new BuildSpatialDatabaseSingleJob
+                {
+                    CachedSpatialDatabase = new CachedSpatialDatabase
+                    {
+                        SpatialDatabaseEntity = spatialDatabaseSingleton.TargetablesSpatialDatabase,
+                        SpatialDatabaseLookup = SystemAPI.GetComponentLookup<SpatialDatabase>(false),
+                        CellsBufferLookup = SystemAPI.GetBufferLookup<SpatialDatabaseCell>(false),
+                        ElementsBufferLookup = SystemAPI.GetBufferLookup<SpatialDatabaseElement>(false),
+                    },
+                };
+                state.Dependency = buildJob.Schedule(state.Dependency);
             }
         }
-        else
-        {
-            BuildSpatialDatabaseSingleJob buildJob = new BuildSpatialDatabaseSingleJob
-            {
-                CachedSpatialDatabase = new CachedSpatialDatabase
-                {
-                    SpatialDatabaseEntity = spatialDatabaseSingleton.TargetablesSpatialDatabase, 
-                    SpatialDatabaseLookup = SystemAPI.GetComponentLookup<SpatialDatabase>(false),
-                    CellsBufferLookup = SystemAPI.GetBufferLookup<SpatialDatabaseCell>(false),
-                    ElementsBufferLookup = SystemAPI.GetBufferLookup<SpatialDatabaseElement>(false),
-                },
-            };
-            state.Dependency = buildJob.Schedule(state.Dependency);
-        }
-    }
 
-    [BurstCompile]
-    [WithAll(typeof(Targetable))]
-    public partial struct BuildSpatialDatabaseSingleJob : IJobEntity, IJobEntityChunkBeginEnd
-    {
-        public CachedSpatialDatabase CachedSpatialDatabase;
-        
-        public void Execute(Entity entity, in LocalToWorld ltw, in Team team, in ActorType actorType)
+        [WithAll(typeof(Targetable))]
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
+        public partial struct BuildSpatialDatabaseSingleJob : IJobEntity, IJobEntityChunkBeginEnd
         {
-            SpatialDatabaseElement element = new SpatialDatabaseElement
-            {
-                Entity = entity,
-                Position = ltw.Position,
-                Team = (byte)team.Index,
-                Type = actorType.Type,
-            };
-            SpatialDatabase.AddToDataBase(in CachedSpatialDatabase._SpatialDatabase,
-                ref CachedSpatialDatabase._SpatialDatabaseCells, ref CachedSpatialDatabase._SpatialDatabaseElements,
-                element);
-        }
+            public CachedSpatialDatabase CachedSpatialDatabase;
 
-        public bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
-        {
-            CachedSpatialDatabase.CacheData();
-            return true;
-        }
-
-        public void OnChunkEnd(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask,
-            bool chunkWasExecuted)
-        {
-        }
-    }
-
-    [BurstCompile]
-    public partial struct SpatialDatabaseParallelComputeCellIndexJob : IJobEntity, IJobEntityChunkBeginEnd
-    {
-        public CachedSpatialDatabaseUnsafe CachedSpatialDatabase;
-        
-        // other cached data
-        private UniformOriginGrid _grid;
-        
-        public void Execute(in LocalToWorld ltw, ref SpatialDatabaseCellIndex sdCellIndex)
-        {
-            sdCellIndex.CellIndex = UniformOriginGrid.GetCellIndex(in _grid, ltw.Position);
-        }
-
-        public bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
-        {
-            CachedSpatialDatabase.CacheData();
-            _grid = CachedSpatialDatabase._SpatialDatabase.Grid;
-            return true;
-        }
-
-        public void OnChunkEnd(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask,
-            bool chunkWasExecuted)
-        {
-        }
-    }
-
-    [BurstCompile]
-    [WithAll(typeof(Targetable))]
-    public partial struct BuildSpatialDatabaseParallelJob : IJobEntity, IJobEntityChunkBeginEnd
-    {
-        public int JobSequenceNb;
-        public int JobsTotalCount;
-        public CachedSpatialDatabaseUnsafe CachedSpatialDatabase;
-        
-        public void Execute(Entity entity, in LocalToWorld ltw, in Team team, in SpatialDatabaseCellIndex sdCellIndex, in ActorType actorType)
-        {
-            if (sdCellIndex.CellIndex % JobsTotalCount == JobSequenceNb)
+            public void Execute(Entity entity, in LocalToWorld ltw, in Team team, in ActorType actorType)
             {
                 SpatialDatabaseElement element = new SpatialDatabaseElement
                 {
@@ -152,21 +95,100 @@ public partial struct BuildSpatialDatabasesSystem : ISystem
                     Team = (byte)team.Index,
                     Type = actorType.Type,
                 };
-                SpatialDatabase.AddToDataBase(in CachedSpatialDatabase._SpatialDatabase,
+                SpatialDatabase.AddToDataBaseSingleThread(in CachedSpatialDatabase._SpatialDatabase,
                     ref CachedSpatialDatabase._SpatialDatabaseCells, ref CachedSpatialDatabase._SpatialDatabaseElements,
-                    element, sdCellIndex.CellIndex);
+                    element);
+            }
+
+            public bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
+            {
+                CachedSpatialDatabase.CacheData();
+                return true;
+            }
+
+            public void OnChunkEnd(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask,
+                bool chunkWasExecuted)
+            {
             }
         }
 
-        public bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
+        [WithAll(typeof(Targetable))]
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
+        public partial struct BuildSpatialDatabaseParallelJob : IJobEntity, IJobEntityChunkBeginEnd
         {
-            CachedSpatialDatabase.CacheData();
-            return true;
+            public CachedSpatialDatabaseUnsafeParallel CachedSpatialDatabase;
+
+            public void Execute(Entity entity, in LocalToWorld ltw, in Team team, in ActorType actorType)
+            {
+                SpatialDatabaseElement element = new SpatialDatabaseElement
+                {
+                    Entity = entity,
+                    Position = ltw.Position,
+                    Team = (byte)team.Index,
+                    Type = actorType.Type,
+                };
+                SpatialDatabase.AddToDataBaseParallel(in CachedSpatialDatabase._SpatialDatabase,
+                    ref CachedSpatialDatabase._SpatialDatabaseCells,
+                    ref CachedSpatialDatabase._SpatialDatabaseElements,
+                    element);
+            }
+
+            public bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
+            {
+                CachedSpatialDatabase.CacheData();
+                return true;
+            }
+
+            public void OnChunkEnd(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask,
+                bool chunkWasExecuted)
+            {
+            }
         }
 
-        public void OnChunkEnd(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask,
-            bool chunkWasExecuted)
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
+        public unsafe struct SortSpatialDatabaseCellElementsParallelJob : IJobParallelFor
         {
+            public int CellsIterationStride;
+            public CachedSpatialDatabaseUnsafeParallel CachedSpatialDatabase;
+
+            public void Execute(int index)
+            {
+                CachedSpatialDatabase.CacheData();
+                UnsafeList<SpatialDatabaseCell> cells = CachedSpatialDatabase._SpatialDatabaseCells;
+                UnsafeList<SpatialDatabaseElement> elements = CachedSpatialDatabase._SpatialDatabaseElements;
+
+                for (int i = index; i < cells.Length; i += CellsIterationStride)
+                {
+                    SpatialDatabaseCell cell = cells[i];
+                    int excessCount = cell.GetExcessElementsCount();
+                    if (excessCount > 0)
+                    {
+                        // In cases of excess, we have to clear all elements of the cell. This is for the sake of
+                        // determinism. Because cell storage capacity doesn't grow as we add elements, and because
+                        // elements don't get added when we're over capacity, there is a possibility that the entities
+                        // added to a cell will differ from one run to another. So for determinism, when we overflow 
+                        // capacity, we will have one frame of empty spatial DB so that the next frame can be valid and
+                        // deterministic.
+                        
+                        // We flip the sign of elements count to signify "invalid". The clear and resize system will use
+                        // the abs value to know what the new capacity should be
+                        cell.UncappedElementsCount = -cell.UncappedElementsCount;
+                        cells[i] = cell;
+                    }
+                    else
+                    {
+                        int trueElementsCount = cell.GetValidElementsCount();
+                        if (trueElementsCount > 0)
+                        {
+                            UnsafeList<SpatialDatabaseElement> elementsSubList =
+                                new UnsafeList<SpatialDatabaseElement>(elements.Ptr + (long)cell.StartIndex, trueElementsCount);
+                        
+                            // Sort elements by ascending entity index, for determinism
+                            elementsSubList.Sort();
+                        }
+                    }
+                }
+            }
         }
     }
 }

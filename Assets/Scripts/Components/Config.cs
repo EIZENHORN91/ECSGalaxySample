@@ -3,6 +3,10 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 
+public struct GameIsSimulating : IComponentData
+{
+}
+
 public struct Config : IComponentData
 {
     public float4 NeutralTeamColor;
@@ -14,6 +18,7 @@ public struct Config : IComponentData
     public Entity MoonPrefab;
     public Entity LaserPrefab;
         
+    public bool AccelerateToMaxTotalShipsCap;
     public bool UseNonDeterministicRandomSeed;
     public uint GameInitializationRandomSeed;
     public float StartCameraDistanceRatio;
@@ -57,8 +62,6 @@ public struct SimulationRate : IComponentData
     public bool UseFixedRate;
     public float FixedTimeStep;
     public float TimeScale;
-
-    public float UnscaledDeltaTime;
 
     public bool Update;
 }

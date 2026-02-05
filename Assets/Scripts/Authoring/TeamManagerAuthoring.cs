@@ -1,6 +1,7 @@
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
+using Galaxy;
 
 [RequireComponent(typeof(TeamAuthoring))]
 public class TeamManagerAuthoring : MonoBehaviour

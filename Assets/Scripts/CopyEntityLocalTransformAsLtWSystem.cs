@@ -3,30 +3,38 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Transforms;
 
-[UpdateInGroup(typeof(TransformSystemGroup), OrderLast = true)]
-partial struct CopyEntityLocalTransformAsLtWSystem : ISystem
+namespace Galaxy
 {
-    [BurstCompile]
-    public void OnUpdate(ref SystemState state)
+    [UpdateInGroup(typeof(TransformSystemGroup), OrderLast = true)]
+    partial struct CopyEntityLocalTransformAsLtWSystem : ISystem
     {
-        state.Dependency = new CopyEntityLocalTransformAsLtWJob
+        public void OnCreate(ref SystemState state)
         {
-            LocalTransformLookup = SystemAPI.GetComponentLookup<LocalTransform>(true),
-        }.ScheduleParallel(state.Dependency);
-    }
+            state.RequireForUpdate<GameIsSimulating>();
+        }
 
-    [BurstCompile]
-    public partial struct CopyEntityLocalTransformAsLtWJob : IJobEntity
-    {
-        [ReadOnly]
-        public ComponentLookup<LocalTransform> LocalTransformLookup;
-        
-        void Execute(ref LocalToWorld ltw, in CopyEntityLocalTransformAsLtW copyEntityTransform)
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
+        public void OnUpdate(ref SystemState state)
         {
-            if (LocalTransformLookup.TryGetComponent(copyEntityTransform.TargetEntity,
-                    out LocalTransform targetLocalTransform))
+            state.Dependency = new CopyEntityLocalTransformAsLtWJob
             {
-                ltw.Value = targetLocalTransform.ToMatrix();
+                LocalTransformLookup = SystemAPI.GetComponentLookup<LocalTransform>(true),
+            }.ScheduleParallel(state.Dependency);
+        }
+
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
+        public partial struct CopyEntityLocalTransformAsLtWJob : IJobEntity
+        {
+            [ReadOnly]
+            public ComponentLookup<LocalTransform> LocalTransformLookup;
+            
+            void Execute(ref LocalToWorld ltw, in CopyEntityLocalTransformAsLtW copyEntityTransform)
+            {
+                if (LocalTransformLookup.TryGetComponent(copyEntityTransform.TargetEntity,
+                        out LocalTransform targetLocalTransform))
+                {
+                    ltw.Value = targetLocalTransform.ToMatrix();
+                }
             }
         }
     }

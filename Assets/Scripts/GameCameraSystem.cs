@@ -8,9 +8,7 @@ using UnityEngine;
 namespace Galaxy
 {
     [BurstCompile]
-    [UpdateInGroup(typeof(SimulationSystemGroup))]
-    [UpdateAfter(typeof(TransformSystemGroup))]
-    [UpdateBefore(typeof(EndSimulationEntityCommandBufferSystem))]
+    [UpdateInGroup(typeof(PresentationSystemGroup))]
     public partial struct GameCameraSystem : ISystem
     {
         private Unity.Mathematics.Random _random;
@@ -19,7 +17,7 @@ namespace Galaxy
         public void OnCreate(ref SystemState state)
         {
             _random = Unity.Mathematics.Random.CreateFromIndex(0);
-            
+            state.RequireForUpdate<GameIsSimulating>();
             state.RequireForUpdate<SimulationRate>();
             state.RequireForUpdate(SystemAPI.QueryBuilder().WithAll<GameCamera>().Build());
         }
@@ -71,7 +69,7 @@ namespace Galaxy
 
             GameCameraJob job = new GameCameraJob
             {
-                DeltaTime = SystemAPI.GetSingleton<SimulationRate>().UnscaledDeltaTime,
+                DeltaTime = SystemAPI.Time.DeltaTime,
                 CameraInputs = cameraInputs,
                 NextTargetPlanet = nextTargetPlanet,
                 NextTargetShip = nextTargetShip,
@@ -218,32 +216,6 @@ namespace Galaxy
                 LocalToWorld cameraLocalToWorld = new LocalToWorld();
                 cameraLocalToWorld.Value = new float4x4(transform.Rotation, transform.Position);
                 LocalToWorldLookup[entity] = cameraLocalToWorld;
-            }
-        }
-    }
-
-    public partial struct IgnoreCameraSystem : ISystem
-    {
-        [BurstCompile]
-        public void OnCreate(ref SystemState state)
-        {
-            state.RequireForUpdate<BeginSimulationEntityCommandBufferSystem.Singleton>();
-            state.RequireForUpdate<IgnoreCameraInputRequest>();
-            state.RequireForUpdate<GameCamera>();
-        }
-
-        [BurstCompile]
-        public void OnUpdate(ref SystemState state)
-        {
-            EntityCommandBuffer ecb = SystemAPI.GetSingleton<BeginSimulationEntityCommandBufferSystem.Singleton>()
-                .CreateCommandBuffer(state.WorldUnmanaged);
-            RefRW<GameCamera> gameCamera = SystemAPI.GetSingletonRW<GameCamera>();
-
-            foreach (var (ignoreCameraInputRequest, entity) in SystemAPI.Query<IgnoreCameraInputRequest>()
-                         .WithEntityAccess())
-            {
-                gameCamera.ValueRW.IgnoreInput = ignoreCameraInputRequest.Value;
-                ecb.DestroyEntity(entity);
             }
         }
     }

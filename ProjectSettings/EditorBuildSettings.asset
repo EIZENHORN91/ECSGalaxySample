@@ -8,5 +8,12 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/Main.unity
     guid: a790d7a97da3477429d036c5011b4b66
-  m_configObjects: {}
+  - enabled: 1
+    path: Assets/_DEV/Scenes/PerformanceTest.unity
+    guid: 081d414e72412d7438ce148834228891
+  m_configObjects:
+    com.unity.input.settings: {fileID: 11400000, guid: 13c84c639c2cdbc40b2edb05b2382bf0,
+      type: 2}
+    com.unity.input.settings.actions: {fileID: -944628639613478452, guid: a0981bc6dbd16484fad45bca5f9ca635,
+      type: 3}
   m_UseUCBPForAssetBundles: 0
