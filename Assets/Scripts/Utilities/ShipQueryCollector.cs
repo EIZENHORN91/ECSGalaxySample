@@ -11,7 +11,7 @@ public struct ShipQueryCollector : ISpatialQueryCollector
     public Entity QuerierEntity;
     public float3 QuerierPosition;
     public byte QuerierTeam;
-        
+
     public SpatialDatabaseElement ClosestEnemy;
     public float ClosestEnemyDistanceSq;
 
@@ -20,17 +20,17 @@ public struct ShipQueryCollector : ISpatialQueryCollector
         QuerierEntity = querierEntity;
         QuerierPosition = querierPosition;
         QuerierTeam = (byte)querierTeam;
-            
+
         ClosestEnemy = default;
         ClosestEnemyDistanceSq = float.MaxValue;
-    } 
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void OnVisitCell(in SpatialDatabaseCell cell, in UnsafeList<SpatialDatabaseElement> elements, out bool shouldEarlyExit)
     {
         shouldEarlyExit = false;
 
-        for (int i = cell.StartIndex; i < cell.StartIndex + cell.ElementsCount; i++)
+        for (int i = cell.StartIndex; i < cell.StartIndex + cell.GetValidElementsCount(); i++)
         {
             SpatialDatabaseElement element = elements[i];
             if (element.Team != QuerierTeam)

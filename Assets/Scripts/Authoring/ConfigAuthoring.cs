@@ -1,6 +1,5 @@
 using Unity.Collections;
 using Unity.Entities;
-using Unity.Logging;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Serialization;
@@ -23,6 +22,7 @@ namespace Galaxy
         public GameObject LaserPrefab;
 
         [Header("General")] 
+        public bool AccelerateToMaxTotalShipsCap = false;
         public bool AutoInitializeGame = true;
         public bool UseNonDeterministicRandomSeed = false;
         public uint GameInitializationRandomSeed = 12345;
@@ -81,6 +81,7 @@ namespace Galaxy
                     MoonPrefab = GetEntity(authoring.MoonPrefab, TransformUsageFlags.None),
                     LaserPrefab = GetEntity(authoring.LaserPrefab, TransformUsageFlags.None),
                     
+                    AccelerateToMaxTotalShipsCap = authoring.AccelerateToMaxTotalShipsCap,
                     UseNonDeterministicRandomSeed = authoring.UseNonDeterministicRandomSeed,
                     GameInitializationRandomSeed = authoring.GameInitializationRandomSeed,
                     StartCameraDistanceRatio = authoring.StartCameraDistanceRatio,

@@ -5,16 +5,15 @@ using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
 using Unity.Jobs;
-using Unity.Transforms;
-using Unity.Logging;
 using Unity.Mathematics;
 using Unity.Rendering;
+using Unity.Transforms;
 using UnityEngine;
 using Random = Unity.Mathematics.Random;
 
 namespace Galaxy
 {
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
     [UpdateAfter(typeof(BuildSpatialDatabaseGroup))]
     [UpdateAfter(typeof(TeamAISystem))]
     [UpdateAfter(typeof(ApplyTeamSystem))]
@@ -31,6 +30,7 @@ namespace Galaxy
             _spatialDatabasesQuery = SystemAPI.QueryBuilder()
                 .WithAll<SpatialDatabase, SpatialDatabaseCell, SpatialDatabaseElement>().Build();
             state.RequireForUpdate<Config>();
+            state.RequireForUpdate<GameIsSimulating>();
             state.RequireForUpdate<SpatialDatabaseSingleton>();
             state.RequireForUpdate(_spatialDatabasesQuery);
             state.RequireForUpdate<PlanetNavigationGrid>();
@@ -40,7 +40,7 @@ namespace Galaxy
             state.RequireForUpdate<VFXThrustersSingleton>();
         }
 
-        [BurstCompile]
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
         public void OnUpdate(ref SystemState state)
         {
             Config config = SystemAPI.GetSingleton<Config>();
@@ -64,15 +64,17 @@ namespace Galaxy
                 DeltaTime = SystemAPI.Time.DeltaTime,
                 PlanetGridEntity = SystemAPI.GetSingletonEntity<PlanetNavigationGrid>(),
                 PlanetNavigationGridLookup = SystemAPI.GetComponentLookup<PlanetNavigationGrid>(true),
-                PlanetNavigationCellLookup = SystemAPI.GetBufferLookup<PlanetNavigationCell>(true),
+                PlanetNavigationCellsBufferLookup = SystemAPI.GetBufferLookup<PlanetNavigationCell>(true),
             };
             state.Dependency = navigationJob.ScheduleParallel(state.Dependency);
-
+            
             FighterAIJob fighterAIJob = new FighterAIJob
             {
                 DeltaTime = SystemAPI.Time.DeltaTime,
                 FighterActionsLookup = SystemAPI.GetBufferLookup<FighterAction>(true),
                 LocalToWorldLookup = SystemAPI.GetComponentLookup<LocalToWorld>(true),
+                TeamManagerReferencesEntity = SystemAPI.GetSingletonEntity<TeamManagerReference>(),
+                TeamManagerReferenceLookup = SystemAPI.GetBufferLookup<TeamManagerReference>(true),
                 CachedSpatialDatabase = new CachedSpatialDatabaseRO
                 {
                     SpatialDatabaseEntity = spatialDatabaseSingleton.TargetablesSpatialDatabase, 
@@ -87,6 +89,8 @@ namespace Galaxy
             {
                 WorkerActionLookup = SystemAPI.GetBufferLookup<WorkerAction>(true),
                 TeamLookup = SystemAPI.GetComponentLookup<Team>(true),
+                TeamManagerReferencesEntity = SystemAPI.GetSingletonEntity<TeamManagerReference>(),
+                TeamManagerReferenceLookup = SystemAPI.GetBufferLookup<TeamManagerReference>(true),
             };
             state.Dependency = workerAIJob.ScheduleParallel(state.Dependency);
 
@@ -95,6 +99,8 @@ namespace Galaxy
                 TraderActionLookup = SystemAPI.GetBufferLookup<TraderAction>(true),
                 TeamLookup = SystemAPI.GetComponentLookup<Team>(true),
                 PlanetLookup = SystemAPI.GetComponentLookup<Planet>(true),
+                TeamManagerReferencesEntity = SystemAPI.GetSingletonEntity<TeamManagerReference>(),
+                TeamManagerReferenceLookup = SystemAPI.GetBufferLookup<TeamManagerReference>(true),
             };
             state.Dependency = traderAIJob.ScheduleParallel(state.Dependency);
             
@@ -130,7 +136,7 @@ namespace Galaxy
             state.Dependency = traderExecuteTradeJob.Schedule( state.Dependency);
         }
 
-        [BurstCompile]
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
         [WithAll(typeof(Initialize))]
         public partial struct ShipInitializeJob : IJobEntity
         {
@@ -156,7 +162,7 @@ namespace Galaxy
             }
         }
 
-        [BurstCompile]
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
         [WithAll(typeof(Initialize))]
         public partial struct FighterInitializeJob : IJobEntity
         {
@@ -168,17 +174,17 @@ namespace Galaxy
             }
         }
 
-        [BurstCompile]
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
         public partial struct ShipNavigationJob : IJobEntity, IJobEntityChunkBeginEnd
         {
             public float DeltaTime;
             public Entity PlanetGridEntity;
             [ReadOnly] public ComponentLookup<PlanetNavigationGrid> PlanetNavigationGridLookup;
-            [ReadOnly] public BufferLookup<PlanetNavigationCell> PlanetNavigationCellLookup;
+            [ReadOnly] public BufferLookup<PlanetNavigationCell> PlanetNavigationCellsBufferLookup;
 
             // Cached data for the lifetime of the job
-            private PlanetNavigationGrid _cachedGrid;
-            [ReadOnly] private DynamicBuffer<PlanetNavigationCell> _cachedCellsBuffer;
+            private PlanetNavigationGrid _cachedGrid; 
+            private UnsafeList<PlanetNavigationCell> _cachedCellsBuffer;
 
             public void Execute(ref LocalTransform transform, ref Ship ship)
             {
@@ -262,14 +268,17 @@ namespace Galaxy
                 transform.Position += ship.Velocity * DeltaTime;
             }
 
-            public bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask,
+            public unsafe bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask,
                 in v128 chunkEnabledMask)
             {
                 // Get the planet navigation data only once, and cache it
                 if (!_cachedCellsBuffer.IsCreated)
                 {
                     _cachedGrid = PlanetNavigationGridLookup[PlanetGridEntity];
-                    _cachedCellsBuffer = PlanetNavigationCellLookup[PlanetGridEntity];
+                    DynamicBuffer<PlanetNavigationCell> planetNavigationCellsBuffer = PlanetNavigationCellsBufferLookup[PlanetGridEntity];
+                    _cachedCellsBuffer = new UnsafeList<PlanetNavigationCell>(
+                        (PlanetNavigationCell*)planetNavigationCellsBuffer.GetUnsafeReadOnlyPtr(), 
+                        planetNavigationCellsBuffer.Length);
                 }
 
                 return true;
@@ -281,7 +290,7 @@ namespace Galaxy
             }
         }
 
-        [BurstCompile]
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
         [WithOptions(EntityQueryOptions.IgnoreComponentEnabledState)]
         public partial struct FighterAIJob : IJobEntity, IJobEntityChunkBeginEnd
         {
@@ -289,10 +298,12 @@ namespace Galaxy
             public CachedSpatialDatabaseRO CachedSpatialDatabase;
             [ReadOnly] public BufferLookup<FighterAction> FighterActionsLookup;
             [ReadOnly] public ComponentLookup<LocalToWorld> LocalToWorldLookup;
+            public Entity TeamManagerReferencesEntity;
+            [ReadOnly] public BufferLookup<TeamManagerReference> TeamManagerReferenceLookup;
 
             // Cached data for the lifetime of the job
-            [NativeDisableContainerSafetyRestriction]
-            private NativeList<float> _tmpFinalImportances;
+            private UnsafeList<float> _tmpFinalImportances;
+            private UnsafeList<UnsafeList<FighterAction>> _cachedFighterActions;
 
             public void Execute(Entity entity, in LocalTransform transform, ref Ship ship, in Team team, ref Fighter fighter, EnabledRefRW<ExecuteAttack> executeAttack)
             {
@@ -323,7 +334,6 @@ namespace Galaxy
                             // Target in range
                             else
                             {
-
                                 ship.IgnoreAvoidance = 1;
                                 
                                 // Update navigation target
@@ -336,9 +346,9 @@ namespace Galaxy
                                     float3 shipToTargetDir = math.normalizesafe(shipToTarget);
                                     float3 shipForward = math.mul(transform.Rotation, math.forward());
                     
-                                    bool activettackTargetInSights =
+                                    bool activeAttackTargetInSights =
                                         math.dot(shipForward, shipToTargetDir) > fighterData.DotProdThresholdForTargetInSights;
-                                    if (activettackTargetInSights)
+                                    if (activeAttackTargetInSights)
                                     {
                                         // Remember to execute the attack this frame
                                         executeAttack.ValueRW = true;
@@ -357,7 +367,7 @@ namespace Galaxy
                     {
                         // Detect enemies to attack
                         fighter.DetectionTimer -= DeltaTime;
-                        if (fighterData.DetectionRange > 0f && fighter.DetectionTimer <= 0f)
+                        if (fighter.DetectionTimer <= 0f && fighterData.DetectionRange > 0f)
                         {
                             ShipQueryCollector collector =
                                 new ShipQueryCollector(entity, transform.Position, team.Index);
@@ -375,8 +385,9 @@ namespace Galaxy
                         // Choose a target planet to go to
                         if (fighter.TargetIsEnemyShip == 0)
                         {
-                            if (FighterActionsLookup.TryGetBuffer(team.ManagerEntity,
-                                    out DynamicBuffer<FighterAction> fighterActionsBuffer))
+                            // Get or cache this team's fighterActions
+                            UnsafeList<FighterAction> fighterActionsList = _cachedFighterActions[team.Index];
+                            if (fighterActionsList.IsCreated)
                             {
                                 ShipData shipData = ship.ShipData.Value;
 
@@ -384,23 +395,23 @@ namespace Galaxy
                                 float importancesTotal = 0f;
                                 float currentActionImportance = -1f;
 
-                                for (int i = 0; i < fighterActionsBuffer.Length; i++)
+                                for (int i = 0; i < fighterActionsList.Length; i++)
                                 {
-                                    FighterAction fitghterAction = fighterActionsBuffer[i];
+                                    FighterAction fighterActions = fighterActionsList[i];
 
                                     float proximityImportance = GameUtilities.CalculateProximityImportance(
-                                        transform.Position, fitghterAction.Position,
+                                        transform.Position, fighterActions.Position,
                                         shipData.MaxDistanceSqForPlanetProximityImportanceScaling,
                                         shipData.PlanetProximityImportanceRemap);
-                                    float finalImportance = fitghterAction.Importance * proximityImportance;
+                                    float finalImportance = fighterActions.Importance * proximityImportance;
 
                                     _tmpFinalImportances.Add(finalImportance);
                                     importancesTotal += finalImportance;
                                     
                                     // Try find the current action's new importance
-                                    if (currentActionImportance < 0f && fitghterAction.Entity == ship.NavigationTargetEntity)
+                                    if (currentActionImportance < 0f && fighterActions.Entity == ship.NavigationTargetEntity)
                                     {
-                                        currentActionImportance = fitghterAction.Importance;
+                                        currentActionImportance = fighterActions.Importance;
                                     }
                                 }
 
@@ -419,7 +430,7 @@ namespace Galaxy
                                     in _tmpFinalImportances, ref persistentRandom);
                                 if (weightedRandomIndex >= 0)
                                 {
-                                    FighterAction fighterAction = fighterActionsBuffer[weightedRandomIndex];
+                                    FighterAction fighterAction = fighterActionsList[weightedRandomIndex];
 
                                     // Only pick a different action if the new action is significantly more important
                                     if (_tmpFinalImportances[weightedRandomIndex] > currentActionImportance * 2f)
@@ -435,13 +446,39 @@ namespace Galaxy
                 }
             }
 
-            public bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask,
+            public unsafe bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask,
                 in v128 chunkEnabledMask)
             {
                 CachedSpatialDatabase.CacheData();
                 if (!_tmpFinalImportances.IsCreated)
                 {
-                    _tmpFinalImportances = new NativeList<float>(64, Allocator.Temp);
+                    _tmpFinalImportances = new UnsafeList<float>(256, Allocator.Temp);
+                }
+
+                // This caches a readonly version of the Actions buffer for each team, for fast access
+                if (!_cachedFighterActions.IsCreated)
+                {
+                    DynamicBuffer<TeamManagerReference> teamManagerReferences =
+                        TeamManagerReferenceLookup[TeamManagerReferencesEntity];
+                    
+                    _cachedFighterActions = new UnsafeList<UnsafeList<FighterAction>>(teamManagerReferences.Length, Allocator.Temp);
+                    _cachedFighterActions.Resize(teamManagerReferences.Length);
+
+                    for (int teamIndex = 0; teamIndex < teamManagerReferences.Length; teamIndex++)
+                    {
+                        if(FighterActionsLookup.TryGetBuffer(teamManagerReferences[teamIndex].Entity, 
+                               out DynamicBuffer<FighterAction> fighterActionsBuffer))
+                        {
+                            _cachedFighterActions[teamIndex] = new UnsafeList<FighterAction>(
+                                (FighterAction*)fighterActionsBuffer.GetUnsafeReadOnlyPtr(), fighterActionsBuffer.Length);
+                                    
+                            // Make sure finalImportances can accomodate highest capacity
+                            if (fighterActionsBuffer.Length > _tmpFinalImportances.Capacity)
+                            {
+                                _tmpFinalImportances.SetCapacity(fighterActionsBuffer.Length);
+                            }
+                        }
+                    }
                 }
 
                 return true;
@@ -453,17 +490,19 @@ namespace Galaxy
             }
         }
 
-        [BurstCompile]
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
         [WithAll(typeof(Team))]
         [WithOptions(EntityQueryOptions.IgnoreComponentEnabledState)]
         public partial struct WorkerAIJob : IJobEntity, IJobEntityChunkBeginEnd
         {
             [ReadOnly] public BufferLookup<WorkerAction> WorkerActionLookup;
             [ReadOnly] public ComponentLookup<Team> TeamLookup;
+            public Entity TeamManagerReferencesEntity;
+            [ReadOnly] public BufferLookup<TeamManagerReference> TeamManagerReferenceLookup;
             
             // Cached data for the lifetime of the job
-            [NativeDisableContainerSafetyRestriction]
-            private NativeList<float> _tmpFinalImportances;
+            private UnsafeList<float> _tmpFinalImportances;
+            private UnsafeList<UnsafeList<WorkerAction>> _cachedWorkerActions;
 
             public void Execute(Entity entity, ref Worker worker, in LocalTransform transform, ref Ship ship,
                 EnabledRefRW<ExecutePlanetCapture> executePlanetCapture, EnabledRefRW<ExecuteBuild> executeBuild)
@@ -504,12 +543,12 @@ namespace Galaxy
                     }
 
                     // Choose an action (capture planet, construct building)
-                    if (WorkerActionLookup.TryGetBuffer(team.ManagerEntity,
-                            out DynamicBuffer<WorkerAction> workerActionsBuffer))
+                    UnsafeList<WorkerAction> workerActionsBuffer = _cachedWorkerActions[team.Index];
+                    if (workerActionsBuffer.IsCreated)
                     {
                         ShipData shipData = ship.ShipData.Value;
                         Random persistentRandom = GameUtilities.GetDeterministicRandom(entity.Index);
-                        
+
                         // Clear data
                         _tmpFinalImportances.Clear();
                         float importancesTotal = 0f;
@@ -565,14 +604,40 @@ namespace Galaxy
                 }
             }
 
-            public bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask,
+            public unsafe bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask,
                 in v128 chunkEnabledMask)
             {
                 if (!_tmpFinalImportances.IsCreated)
                 {
-                    _tmpFinalImportances = new NativeList<float>(64, Allocator.Temp);
+                    _tmpFinalImportances = new UnsafeList<float>(64, Allocator.Temp);
                 }
 
+                // This caches a readonly version of the Actions buffer for each team, for fast access
+                if (!_cachedWorkerActions.IsCreated)
+                {
+                    DynamicBuffer<TeamManagerReference> teamManagerReferences =
+                        TeamManagerReferenceLookup[TeamManagerReferencesEntity];
+                    
+                    _cachedWorkerActions = new UnsafeList<UnsafeList<WorkerAction>>(teamManagerReferences.Length, Allocator.Temp);
+                    _cachedWorkerActions.Resize(teamManagerReferences.Length);
+
+                    for (int teamIndex = 0; teamIndex < teamManagerReferences.Length; teamIndex++)
+                    {
+                        if(WorkerActionLookup.TryGetBuffer(teamManagerReferences[teamIndex].Entity, 
+                               out DynamicBuffer<WorkerAction> workerActionsBuffer))
+                        {
+                            _cachedWorkerActions[teamIndex] = new UnsafeList<WorkerAction>(
+                                (WorkerAction*)workerActionsBuffer.GetUnsafeReadOnlyPtr(), workerActionsBuffer.Length);
+                                    
+                            // Make sure finalImportances can accomodate highest capacity
+                            if (workerActionsBuffer.Length > _tmpFinalImportances.Capacity)
+                            {
+                                _tmpFinalImportances.SetCapacity(workerActionsBuffer.Length);
+                            }
+                        }
+                    }
+                }
+                
                 return true;
             }
 
@@ -582,7 +647,7 @@ namespace Galaxy
             }
         }
 
-        [BurstCompile]
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
         [WithAll(typeof(ExecutePlanetCapture))]
         public partial struct WorkerExecutePlanetCaptureJob : IJobEntity
         {
@@ -608,7 +673,7 @@ namespace Galaxy
             }
         }
 
-        [BurstCompile]
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
         [WithAll(typeof(ExecuteBuild))]
         public partial struct WorkerExecuteBuildJob : IJobEntity
         {
@@ -637,7 +702,7 @@ namespace Galaxy
             }
         }
 
-        [BurstCompile]
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
         [WithAll(typeof(Team))]
         [WithOptions(EntityQueryOptions.IgnoreComponentEnabledState)]
         public partial struct TraderAIJob : IJobEntity, IJobEntityChunkBeginEnd
@@ -648,12 +713,13 @@ namespace Galaxy
             public ComponentLookup<Team> TeamLookup;
             [ReadOnly] 
             public ComponentLookup<Planet> PlanetLookup;
+            public Entity TeamManagerReferencesEntity;
+            [ReadOnly] public BufferLookup<TeamManagerReference> TeamManagerReferenceLookup;
 
             // Cached data for the lifetime of the job
-            [NativeDisableContainerSafetyRestriction]
-            private NativeList<float3> _tmpFinalImportancesVector;
-            [NativeDisableContainerSafetyRestriction]
-            private NativeList<float> _tmpFinalImportances;
+            private UnsafeList<float3> _tmpFinalImportancesVector;
+            private UnsafeList<float> _tmpFinalImportances;
+            private UnsafeList<UnsafeList<TraderAction>> _cachedTraderActions;
 
             public void Execute(Entity entity, in LocalTransform transform, ref Ship ship, ref Trader trader, EnabledRefRW<ExecuteTrade> executeTrade)
             {
@@ -709,8 +775,8 @@ namespace Galaxy
                 Random persistentRandom = GameUtilities.GetDeterministicRandom(entity.Index, trader.FindTradeRouteAttempts);
 
                 // Get this ship's team manager data
-                if (TraderActionLookup.TryGetBuffer(team.ManagerEntity,
-                        out DynamicBuffer<TraderAction> traderActionsBuffer))
+                UnsafeList<TraderAction> traderActionsBuffer = _cachedTraderActions[team.Index];
+                if (traderActionsBuffer.IsCreated)
                 {
                     ship.NavigationTargetEntity = Entity.Null;
 
@@ -861,18 +927,48 @@ namespace Galaxy
                 trader.FindTradeRouteAttempts = 0;
             }
             
-            public bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask,
+            public unsafe bool OnChunkBegin(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask,
                 in v128 chunkEnabledMask)
             {
                 if (!_tmpFinalImportancesVector.IsCreated)
                 {
-                    _tmpFinalImportancesVector = new NativeList<float3>(64, Allocator.Temp);
+                    _tmpFinalImportancesVector = new UnsafeList<float3>(64, Allocator.Temp);
                 }
                 if (!_tmpFinalImportances.IsCreated)
                 {
-                    _tmpFinalImportances = new NativeList<float>(64, Allocator.Temp);
+                    _tmpFinalImportances = new UnsafeList<float>(64, Allocator.Temp);
                 }
 
+                // This caches a readonly version of the Actions buffer for each team, for fast access
+                if (!_cachedTraderActions.IsCreated)
+                {
+                    DynamicBuffer<TeamManagerReference> teamManagerReferences =
+                        TeamManagerReferenceLookup[TeamManagerReferencesEntity];
+                    
+                    _cachedTraderActions = new UnsafeList<UnsafeList<TraderAction>>(teamManagerReferences.Length, Allocator.Temp);
+                    _cachedTraderActions.Resize(teamManagerReferences.Length);
+
+                    for (int teamIndex = 0; teamIndex < teamManagerReferences.Length; teamIndex++)
+                    {
+                        if(TraderActionLookup.TryGetBuffer(teamManagerReferences[teamIndex].Entity, 
+                               out DynamicBuffer<TraderAction> traderActionsBuffer))
+                        {
+                            _cachedTraderActions[teamIndex] = new UnsafeList<TraderAction>(
+                                (TraderAction*)traderActionsBuffer.GetUnsafeReadOnlyPtr(), traderActionsBuffer.Length);
+                                    
+                            // Make sure finalImportances can accomodate highest capacity
+                            if (traderActionsBuffer.Length > _tmpFinalImportances.Capacity)
+                            {
+                                _tmpFinalImportances.SetCapacity(traderActionsBuffer.Length);
+                            }
+                            if (traderActionsBuffer.Length > _tmpFinalImportancesVector.Capacity)
+                            {
+                                _tmpFinalImportancesVector.SetCapacity(traderActionsBuffer.Length);
+                            }
+                        }
+                    }
+                }
+                
                 return true;
             }
 
@@ -883,7 +979,7 @@ namespace Galaxy
         }
 
 
-        [BurstCompile]
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
         [WithAll(typeof(Team))]
         [WithAll(typeof(ExecuteTrade))]
         public partial struct TraderExecuteTradeJob : IJobEntity
@@ -948,7 +1044,7 @@ namespace Galaxy
             }
         }
 
-        [BurstCompile]
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
         [WithAll(typeof(ExecuteAttack))]
         public partial struct FighterExecuteAttackJob : IJobEntity
         {
@@ -991,53 +1087,6 @@ namespace Galaxy
                 }
 
                 fighter.AttackTimer = fighterData.AttackDelay;
-            }
-        }
-    }
-}
-
-[BurstCompile]
-[UpdateAfter(typeof(TransformSystemGroup))]
-public partial struct ShipPostTransformsSystem : ISystem
-{
-    [BurstCompile]
-    public void OnCreate(ref SystemState state)
-    {
-        state.RequireForUpdate<VFXThrustersSingleton>();
-    }
-
-    [BurstCompile]
-    public void OnUpdate(ref SystemState state)
-    {
-        VFXThrustersSingleton vfxThrustersSingleton = SystemAPI.GetSingletonRW<VFXThrustersSingleton>().ValueRW;
-
-        ShipSetVFXDataJob shipSetVFXDataJob = new ShipSetVFXDataJob
-        {
-            DeltaTime = SystemAPI.Time.DeltaTime,
-            ThrustersData = vfxThrustersSingleton.Manager.Datas,
-        };
-        state.Dependency = shipSetVFXDataJob.ScheduleParallel(state.Dependency);
-    }
-
-    [BurstCompile]
-    public partial struct ShipSetVFXDataJob : IJobEntity
-    {
-        public float DeltaTime;
-        [NativeDisableParallelForRestriction]
-        [NativeDisableContainerSafetyRestriction]
-        public NativeArray<VFXThrusterData> ThrustersData;
-            
-        private void Execute(in LocalTransform transform, in Ship ship)
-        {
-            if (ship.ThrusterVFXIndex >= 0)
-            {
-                ref ShipData shipData = ref ship.ShipData.Value;
-                    
-                VFXThrusterData thrusterData = ThrustersData[ship.ThrusterVFXIndex];
-                thrusterData.Position =
-                    transform.Position + math.mul(transform.Rotation, shipData.ThrusterLocalPosition);
-                thrusterData.Direction = math.mul(transform.Rotation, -math.forward());
-                ThrustersData[ship.ThrusterVFXIndex] = thrusterData;
             }
         }
     }

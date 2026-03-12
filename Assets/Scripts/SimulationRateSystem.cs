@@ -1,9 +1,11 @@
 using Unity.Core;
 using Unity.Entities;
+using UnityEngine;
 
 namespace Galaxy
 {
-    [UpdateInGroup(typeof(InitializationSystemGroup))]
+    [UpdateInGroup(typeof(SimulationSystemGroup), OrderFirst = true)]
+    [UpdateBefore(typeof(SimulationTimeScaleSystem))]
     public partial struct SimulationRateSystem : ISystem
     {
         private bool _hadFirstTimeInit;
@@ -11,12 +13,32 @@ namespace Galaxy
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<SimulationRate>();
+            SimulationSystemGroup simulationSystemGroup = state.World.GetExistingSystemManaged<SimulationSystemGroup>();
+            
+            // Checking whether the config prefab specifies a different frame rate for the simulation system group
+            GameObject configGO = Resources.Load<GameObject>("Config");
+            if (configGO != null)
+            {
+                ConfigAuthoring settings = configGO.GetComponent<ConfigAuthoring>();
+                if (settings != null && settings.UseFixedSimulationDeltaTime)
+                {
+                    simulationSystemGroup.RateManager = new RateUtils.FixedRateCatchUpManager(settings.FixedDeltaTime);
+                }
+                else
+                {
+                    simulationSystemGroup.RateManager = null;
+                }   
+            }
+            
+            // For the sake of determinism with fixed rate catchup managers, don't set a MaximumDeltaTime
+            simulationSystemGroup.World.MaximumDeltaTime = float.MaxValue;
         }
 
         public void OnUpdate(ref SystemState state)
         {
             ref SimulationRate simRate = ref SystemAPI.GetSingletonRW<SimulationRate>().ValueRW;
-
+            SimulationSystemGroup simulationSystemGroup = state.World.GetExistingSystemManaged<SimulationSystemGroup>();
+            
             if (!_hadFirstTimeInit)
             {
                 const string _fixedRateArg = "-fixedRate:";
@@ -50,18 +72,15 @@ namespace Galaxy
 
             if (simRate.Update)
             {
-                SimulationSystemGroup simulationSystemGroup =
-                    state.World.GetExistingSystemManaged<SimulationSystemGroup>();
                 
                 if (simRate.UseFixedRate)
                 {
-                    simulationSystemGroup.RateManager = new RateUtils.FixedRateSimpleManager(simRate.FixedTimeStep);
+                    simulationSystemGroup.RateManager = new RateUtils.FixedRateCatchUpManager(simRate.FixedTimeStep);
                 }
                 else
                 {
                     simulationSystemGroup.RateManager = null;
                 }
-
                 simRate.Update = false;
             }
         }
@@ -71,8 +90,6 @@ namespace Galaxy
     [UpdateBefore(typeof(GameInitializeSystem))]
     public partial struct SimulationTimeScaleSystem : ISystem
     {
-        private bool _hadFirstTimeInit;
-
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<SimulationRate>();
@@ -81,8 +98,6 @@ namespace Galaxy
         public void OnUpdate(ref SystemState state)
         {
             ref SimulationRate simRate = ref SystemAPI.GetSingletonRW<SimulationRate>().ValueRW;
-
-            simRate.UnscaledDeltaTime = SystemAPI.Time.DeltaTime;
             
             state.World.SetTime(new TimeData(
                 SystemAPI.Time.ElapsedTime,

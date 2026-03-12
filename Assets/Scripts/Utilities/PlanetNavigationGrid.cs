@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
 using Unity.Mathematics;
 
@@ -77,7 +78,7 @@ public static class PlanetNavigationGridUtility
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool GetCellDataAtPosition(in PlanetNavigationGrid navigationGrid, in DynamicBuffer<PlanetNavigationCell> cellsBuffer, float3 position, out PlanetNavigationCell cellNavigation)
+    public static bool GetCellDataAtPosition(in PlanetNavigationGrid navigationGrid, in UnsafeList<PlanetNavigationCell> cellsBuffer, float3 position, out PlanetNavigationCell cellNavigation)
     {
         if (UniformOriginGrid.IsInBounds(in navigationGrid.Grid, position))
         {

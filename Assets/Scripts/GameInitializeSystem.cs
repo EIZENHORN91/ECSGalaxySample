@@ -2,17 +2,21 @@
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
-using Unity.Logging;
 using Unity.Mathematics;
 using Unity.Transforms;
+using UnityEngine;
 using Random = Unity.Mathematics.Random;
 
 namespace Galaxy
 {
+    public struct FinishedAcceleratingToMaxTotalShipsEvent : IComponentData
+    { }
+
     [UpdateInGroup(typeof(BeginSimulationMainThreadGroup))]
     public partial struct GameInitializeSystem : ISystem
     {
         private uint _nonDeterministicSeed;
+        private EntityQuery _shipsQuery;
 
         public void OnCreate(ref SystemState state)
         {
@@ -23,20 +27,48 @@ namespace Galaxy
             state.RequireForUpdate<GameCamera>();
 
             _nonDeterministicSeed = GameUtilities.GetUniqueUIntFromInt(DateTime.Now.Millisecond);
+            _shipsQuery = new EntityQueryBuilder(Allocator.Temp).WithAll<Ship>().Build(state.EntityManager);
         }
 
-        [BurstCompile]
+        [BurstCompile(FloatPrecision.High, FloatMode.Deterministic)]
         public void OnUpdate(ref SystemState state)
         {
             // Initialize the game when we find a config singleton with disabled initialized state
             if (SystemAPI.TryGetSingleton(out Config config))
             {
+                // Handle accelerating to max ships cap
+                if(config.AccelerateToMaxTotalShipsCap)
+                {
+                    ref SimulationRate simRate = ref SystemAPI.GetSingletonRW<SimulationRate>().ValueRW;
+                    simRate.TimeScale = 10f;
+                    
+                    int shipsCount = _shipsQuery.CalculateEntityCount();
+
+                    if (shipsCount >= config.MaxTotalShips)
+                    {
+                        simRate.TimeScale = 1f;
+                        config.AccelerateToMaxTotalShipsCap = false;
+                        Entity eventEntity = state.EntityManager.CreateEntity();
+                        state.EntityManager.AddComponentData(eventEntity,
+                            new FinishedAcceleratingToMaxTotalShipsEvent());
+                        SystemAPI.SetSingleton(config);
+                    }
+                }
+                
                 if (!config.MustInitializeGame)
                     return;
 
                 // Set state to initialized
                 config.MustInitializeGame = false;
                 SystemAPI.SetSingleton(config);
+
+                var gameIsSimulating = SystemAPI.QueryBuilder().WithAll<GameIsSimulating>().Build();
+
+                if (gameIsSimulating.CalculateEntityCount() > 0)
+                    return;
+                
+                // Create a tag entity to notify all systems that the simulation is now running
+                state.EntityManager.AddComponentData(state.EntityManager.CreateEntity(), new GameIsSimulating ());
 
                 // Get and create initialization data
                 float simulationCubeHalfExtents = config.HomePlanetSpawnRadius + config.SimulationBoundsPadding;

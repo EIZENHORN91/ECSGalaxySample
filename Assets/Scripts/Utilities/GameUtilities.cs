@@ -1,10 +1,13 @@
 using System.Runtime.CompilerServices;
 using Unity.Collections;
 using Unity.Entities;
-using Unity.Logging;
 using Unity.Mathematics;
 using Unity.Rendering;
 using Unity.Transforms;
+using UnityEngine;
+using Random = Unity.Mathematics.Random;
+using Galaxy;
+using Unity.Collections.LowLevel.Unsafe;
 
 public struct IdentifiedImportance
 {
@@ -79,7 +82,7 @@ public static class GameUtilities
     {
         if (team > byte.MaxValue)
         {
-            Log.Error("Error: surpassed max teams count");
+            Debug.Log("Error: surpassed max teams count");
         }
         
         entityManager.SetComponentData(entity, new Team { Index = team });
@@ -91,7 +94,7 @@ public static class GameUtilities
     {
         if (team > byte.MaxValue)
         {
-            Log.Error("Error: surpassed max teams count");
+            Debug.Log("Error: surpassed max teams count");
         }
 
         ecb.SetComponent(entity, new Team { Index = team });
@@ -103,7 +106,7 @@ public static class GameUtilities
     {
         if (team > byte.MaxValue)
         {
-            Log.Error("Error: surpassed max teams count");
+            Debug.Log("Error: surpassed max teams count");
         }
 
         ecb.SetComponent(sortKey, entity, new Team { Index = team });
@@ -251,7 +254,7 @@ public static class GameUtilities
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static int GetWeightedRandomIndex(float totalWeights, in NativeList<float> importances, ref Random random)
+    public static int GetWeightedRandomIndex(float totalWeights, in UnsafeList<float> importances, ref Random random)
     {
         float decision = random.NextFloat(0f, totalWeights);
         totalWeights = 0f;
@@ -268,7 +271,7 @@ public static class GameUtilities
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static int GetWeightedRandomIndex(float3 totalWeights, in NativeList<float3> importances, ref Random random, out int subIndex)
+    public static int GetWeightedRandomIndex(float3 totalWeights, in UnsafeList<float3> importances, ref Random random, out int subIndex)
     {
         subIndex = 0;
         float decision = random.NextFloat(0f, math.csum(totalWeights));
@@ -321,7 +324,7 @@ public static class GameUtilities
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static uint GetUniqueUIntFromInt(int val)
     {
-        return math.select((uint)val, (uint)(int.MaxValue) + (uint)(val), val <= 0);
+        return UnsafeUtility.As<int, uint>(ref val);
     }
 
     public static float GetTimeScale(WorldUnmanaged world)

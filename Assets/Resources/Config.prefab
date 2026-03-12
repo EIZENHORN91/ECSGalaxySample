@@ -85,13 +85,14 @@ MonoBehaviour:
     type: 3}
   LaserPrefab: {fileID: 7696461322771098786, guid: 99d51ff630a8bf241bd454514d97e695,
     type: 3}
+  AccelerateToMaxTotalShipsCap: 0
   AutoInitializeGame: 0
   UseNonDeterministicRandomSeed: 0
   GameInitializationRandomSeed: 12345
   UseFixedSimulationDeltaTime: 0
   FixedDeltaTime: 0.0333333
   StartCameraDistanceRatio: 1.4
-  MaxTotalShips: 200000
+  MaxTotalShips: 50000
   MaxShipsPerTeam: 200000
   InitialShipSpawns:
   - IndexInCollection: 0
@@ -109,11 +110,11 @@ MonoBehaviour:
   - IndexInCollection: 6
     SpawnCount: 0
   InitialBuildingIndex: 0
-  HomePlanetSpawnRadius: 700
+  HomePlanetSpawnRadius: 1000
   MinPlanetSize: 7
   MaxPlanetSize: 14
   PlanetShipAssessmentsPerUpdate: 3
-  NeutralPlanetsCount: 45
+  NeutralPlanetsCount: 80
   HomePlanetResourceGenerationRate:
     x: 100
     y: 20
@@ -143,7 +144,6 @@ MonoBehaviour:
     x: 0.7
     y: 1.3
   BuildSpatialDatabaseParallel: 1
-  ParallelSpatialDatabaseBuildJobsCount: 8
   SimulationBoundsPadding: 40
   SpatialDatabaseSubdivisions: 5
   PlanetNavigationGridSubdivisions: 5
